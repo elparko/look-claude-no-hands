@@ -29,6 +29,10 @@ const SPOKEN_PROMPT =
 const UPDATE_GAP_MS = 20_000
 const SHORT_ANSWER = 300
 const DISCARD = /^\W*never ?mind\W*$/i
+const CANCEL = /^\W*(cancel( that)?|scratch that)\W*$/i
+const CLEAR = /^\W*clear( the)? queue\W*$/i
+const SEND_NOW = /^\W*(send (it |that )?now|next)\W*$/i
+const STOP = /^\W*stop( working)?\W*$/i
 
 type Heard = { ready?: boolean; start?: boolean; partial?: string; final?: string; error?: string }
 
@@ -41,6 +45,7 @@ let speechId = 0
 let sessionId = 0
 let lastSpokenAt = 0
 let pending: string[] = []
+let turnId: string | undefined
 let micLevel: string | undefined
 let voiceName: string | undefined
 
@@ -138,12 +143,53 @@ function turnOff($: EngineInterface, why?: string) {
   if (why) $.ui.toast(why)
 }
 
-function onHeard($: EngineInterface, text: string) {
+function showQueue($: EngineInterface) {
+  void update($, queue, () => [...pending])
+}
+
+async function stopWork($: EngineInterface) {
+  if (!isWorking || turnId === undefined) return
+  await $.turn.abort({ turnId }).catch(() => {})
+}
+
+async function control($: EngineInterface, text: string) {
+  if (CANCEL.test(text)) {
+    if (pending.length === 0) return true
+    pending.pop()
+    showQueue($)
+    void speak($, 'Removed.')
+    return true
+  }
+  if (CLEAR.test(text)) {
+    pending = []
+    showQueue($)
+    void speak($, 'Cleared.')
+    return true
+  }
+  if (SEND_NOW.test(text)) {
+    if (pending.length === 0) return true
+    await stopWork($)
+    const queued = takePending($)
+    isWorking = true
+    refresh($)
+    void $.prompt.submit({ text: queued, asUser: true })
+    return true
+  }
+  if (STOP.test(text)) {
+    await stopWork($)
+    void speak($, 'Stopped.')
+    return true
+  }
+  return false
+}
+
+async function onHeard($: EngineInterface, text: string) {
   hear($, '')
   if (!/[a-z0-9]/i.test(text) || DISCARD.test(text)) return
+  if (await control($, text)) return
   if (isWorking) {
     pending.push(text)
-    void update($, queue, () => [...pending])
+    showQueue($)
     return
   }
   isWorking = true
@@ -175,7 +221,7 @@ async function converse($: EngineInterface) {
         if (msg.final !== undefined) {
           isHearing = false
           refresh($)
-          onHeard($, msg.final.trim())
+          await onHeard($, msg.final.trim())
         }
         if (msg.error) why = `Voice mode off: ${msg.error}`
       }
@@ -184,7 +230,8 @@ async function converse($: EngineInterface) {
   if (id === sessionId && isActive) turnOff($, why)
 }
 
-async function start($: EngineInterface) {
+async function start($: EngineInterface, id: number) {
+  if (id !== sessionId) return
   refresh($)
   void update($, phase, () => 'loading')
   const env: Record<string, string> = {
@@ -192,7 +239,7 @@ async function start($: EngineInterface) {
     ...(voiceName ? { NO_HANDS_VOICE: voiceName } : {}),
   }
   const r = await $.process.run([`${$.plugin.root}/voiced`, socket($)], { env, timeoutMs: 600_000 }).catch(() => undefined)
-  if (!isActive) return
+  if (!isActive || id !== sessionId) return
   if (r?.exitCode !== 0) return turnOff($, `Voice mode off: the voice server did not start. ${r?.stdout.trim() ?? ''}`)
   refresh($)
   await converse($)
@@ -252,7 +299,8 @@ export const register: Register = on => {
     }
     isActive = true
     isWorking = false
-    $.clock.after(0, () => void start($))
+    const id = ++sessionId
+    $.clock.after(0, () => void start($, id))
     return { text: 'Voice mode on. Talk any time; pause to send. /talk level 0.05 ignores more background sound. Run /talk again to end it.' }
   })
 
@@ -263,6 +311,7 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
+    turnId = e.turnId
     if (isActive) {
       isWorking = true
       showReply($, '')

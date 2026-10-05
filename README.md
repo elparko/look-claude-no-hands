@@ -35,9 +35,12 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and th
 | Ignore more background sound | `/talk level 0.05` (default 0.03). Takes effect at once. |
 | Change the voice | `/talk voice bm_george`. Plays a sample at once. `/talk voice` lists the choices. |
 | Interrupt Claude's speech | Start talking. It stops right away. |
+| Remove the last queued item | Say "cancel" or "scratch that" |
+| Empty the queue | Say "clear queue" |
+| Send the queue right away | Say "send now" or "next". Claude's current step stops and the queue is sent as your next prompt. |
 | Discard what you just said | Say "never mind" |
 | Type instead | Type a prompt. Speech stops; voice mode stays on. |
-| Stop Claude's work | Press Esc. Voice mode stays on. |
+| Stop Claude's work | Press Esc, or say "stop". Voice mode stays on. |
 | Stop voice mode | Type `/talk` again |
 
 Use headphones. With speakers, the microphone hears Claude's voice and can mistake it for you interrupting. If you use speakers, raise `NO_HANDS_BARGE`.

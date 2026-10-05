@@ -206,3 +206,29 @@ test('/talk voice switches the voice and plays a sample', { timeoutMs: 20_000 },
   expect(w.spoken).toEqual(['This is how I sound now.'])
   await $.command.run(talk)
 })
+
+test('turning voice off and on during startup greets once', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [])
+  await $.command.run(talk)
+  await $.command.run(talk)
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.spoken).toEqual(["I'm listening."])
+  await $.command.run(talk)
+})
+
+test('"cancel" removes the last queued item and "send now" stops the turn and sends the rest', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, ['check the runner', 'and the logs', 'cancel', 'send now'])
+  const aborted: string[] = []
+  on('turn.abort', (_$, e) => {
+    aborted.push(e.turnId)
+    return { value: undefined }
+  })
+  await $.command.run(talk)
+  await $.turn.start({ text: 'run the tests', turnId: 't1' } as never)
+  await w.clock.advance(0)
+  expect(aborted).toEqual(['t1'])
+  expect(w.submitted).toEqual(['check the runner'])
+  expect(w.spoken).toContain('Removed.')
+  await $.command.run(talk)
+})

@@ -54,6 +54,7 @@ stop = threading.Event()
 barge = threading.Event()
 playing = threading.Event()
 user_talking = threading.Event()
+listener = [0]
 last_used = [time.monotonic()]
 busy = [0]
 
@@ -130,6 +131,8 @@ def speak(text: str) -> str:
 
 
 def listen(send):
+    listener[0] += 1
+    me = listener[0]
     blocks: queue.Queue = queue.Queue()
     size = int(RATE * BLOCK)
 
@@ -160,6 +163,8 @@ def listen(send):
             threading.Thread(target=run, daemon=True).start()
 
         while True:
+            if listener[0] != me:
+                raise ConnectionError("replaced by a newer listener")
             try:
                 block = blocks.get(timeout=0.5)
             except queue.Empty:

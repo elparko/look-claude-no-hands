@@ -58,7 +58,7 @@ const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string;
       ) : null}
       {props.queue.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>Waiting for Claude's next step</Text>
+          <Text dimColor>Waiting for Claude's next step · say "send now", "cancel" or "clear queue"</Text>
           {props.queue.map((item, i) => (
             <Text key={`q${i}`}>
               {i + 1}. {item}
