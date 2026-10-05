@@ -55,7 +55,7 @@ An animated indicator above the prompt shows what it is doing: a moving green wa
 
 1. **Turn ends.** The mod sends a copy of the current conversation, with the same model, one extra request: rewrite the last reply as 1 to 4 spoken sentences, with no code, file paths, URLs or lists, and keep any question asked. Most of that request is served from the prompt cache. The reply on screen is unchanged.
 2. **Speak.** `speak.sh` turns that text into audio with Kokoro, an 82-million-parameter text-to-speech model, on your Mac, then plays it. Generating takes about 4 seconds, mostly model loading. If Kokoro is missing or fails, the macOS `say` voice reads it instead. If the rewrite fails, it reads the first paragraph of the reply with code removed.
-3. **Record.** `listen.sh` plays a tone, then `rec` (from sox) records until 2 seconds of silence, up to 2 minutes.
+3. **Record.** `listen.sh` plays a tone, then `rec` (from sox) records until 3 seconds of silence, up to 2 minutes. Transcripts with no words in them, which Whisper produces from background noise, are ignored.
 4. **Transcribe.** `mlx_whisper` runs Whisper large-v3-turbo on your Mac. No audio leaves the machine. It takes about 2 seconds once the model is loaded.
 5. **Submit.** The text is submitted as your prompt, and the cycle repeats.
 
@@ -69,6 +69,7 @@ Set these in your shell profile, then restart Claude Code:
 |---|---|---|
 | `NO_HANDS_VOICE` | `af_heart` | Kokoro voice. The first letter sets the accent: `a` American, `b` British. The second sets female or male. Examples: `af_bella`, `am_michael`, `bf_emma`, `bm_george`. |
 | `NO_HANDS_SPEED` | `1.0` | Speaking rate. `1.2` is 20% faster. |
+| `NO_HANDS_PAUSE` | `3.0` | Seconds of silence that end your turn. Raise it if you get cut off mid-thought. |
 
 The full voice list is on the [Kokoro model page](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md).
 

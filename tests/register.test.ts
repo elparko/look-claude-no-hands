@@ -1,7 +1,8 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-function world(on: On, heard: string, speakExit = 0) {
+function world(on: On, heard: string | string[], speakExit = 0) {
+  const queue = typeof heard === 'string' ? [heard] : [...heard]
   const clock = mock.clock(on)
   const spoken: string[] = []
   const said: string[] = []
@@ -15,7 +16,7 @@ function world(on: On, heard: string, speakExit = 0) {
     const isSpeak = e.argv[0]?.endsWith('/speak.sh') ?? false
     if (isSpeak) spoken.push(e.argv[1] ?? '')
     const exitCode = isSpeak ? speakExit : 0
-    return { value: { exitCode, stdout: isSpeak ? '' : heard, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    return { value: { exitCode, stdout: isSpeak ? '' : queue.length > 1 ? queue.shift()! : queue[0]!, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('ui.toast', () => ({ value: undefined }))
@@ -110,4 +111,11 @@ test('a turn that ends without an answer goes back to listening', async ($, on) 
   await $.turn.complete({ ...turn, reason: 'max_turns' as never })
   await w.clock.advance(0)
   expect(w.submitted).toEqual(['try again'])
+})
+
+test('a transcript with no words is not submitted', async ($, on) => {
+  const w = world(on, ['...', 'run the tests'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.submitted).toEqual(['run the tests'])
 })

@@ -8,7 +8,7 @@ if [[ ${1:-} == --file ]]; then
   cp "$2" $dir/turn.wav
 else
   afplay /System/Library/Sounds/Tink.aiff
-  rec -q -c 1 -r 16000 $dir/turn.wav silence 1 0.1 3% 1 2.0 3% trim 0 120 2>/dev/null || exit 1
+  rec -q -c 1 -r 16000 $dir/turn.wav silence 1 0.1 3% 1 ${NO_HANDS_PAUSE:-3.0} 3% trim 0 120 2>/dev/null || exit 1
 fi
 
 mlx_whisper $dir/turn.wav --model mlx-community/whisper-large-v3-turbo \

@@ -63,7 +63,7 @@ async function listen($: EngineInterface) {
     return
   }
 
-  if (!heard || DISCARD.test(heard)) return listen($)
+  if (!/[a-z0-9]/i.test(heard) || DISCARD.test(heard)) return listen($)
   if (STOP.test(heard)) {
     isActive = false
     show($, null)
