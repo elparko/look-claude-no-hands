@@ -1,4 +1,9 @@
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
+
+import type { VoicePhase } from '../types'
+
+const phase = atom({ plugin: 'no-hands', key: 'phase' } as const, null)
 
 const SPOKEN_PROMPT =
   'Voice mode is on. Rewrite your last reply as what you would say out loud to me: ' +
@@ -28,6 +33,10 @@ async function speak($: EngineInterface, text: string) {
   await $.audio.speak(text).catch(() => {})
 }
 
+function show($: EngineInterface, next: VoicePhase | null) {
+  void update($, phase, () => next)
+}
+
 function stopRecording($: EngineInterface) {
   listenId++
   void $.process.run(['pkill', '-f', 'claude-voice-talk']).catch(() => {})
@@ -36,13 +45,13 @@ function stopRecording($: EngineInterface) {
 function turnOff($: EngineInterface, why?: string) {
   isActive = false
   stopRecording($)
-  $.ui.status(undefined)
+  show($, null)
   if (why) $.ui.toast(why)
 }
 
 async function listen($: EngineInterface) {
   const id = ++listenId
-  $.ui.status('voice: listening')
+  show($, 'listening')
   let heard = ''
   try {
     const r = await $.process.run([`${$.plugin.root}/listen.sh`], { timeoutMs: 180_000 })
@@ -57,20 +66,20 @@ async function listen($: EngineInterface) {
   if (!heard || DISCARD.test(heard)) return listen($)
   if (STOP.test(heard)) {
     isActive = false
-    $.ui.status(undefined)
+    show($, null)
     await speak($, 'Voice mode off.')
     return
   }
-  $.ui.status('voice: working')
+  show($, 'working')
   await $.prompt.submit({ text: heard, asUser: true })
 }
 
 async function respond($: EngineInterface, answer: string) {
-  $.ui.status('voice: preparing reply')
-  const forked = await $.model.fork({ prompt: SPOKEN_PROMPT })
+  show($, 'preparing')
+  const forked = await $.model.fork({ prompt: SPOKEN_PROMPT }).catch(() => undefined)
   if (!isActive) return
-  const spoken = forked.isAnswered ? forked.text.trim() : fallbackSpoken(answer)
-  $.ui.status('voice: speaking')
+  const spoken = forked?.isAnswered ? forked.text.trim() : fallbackSpoken(answer)
+  show($, 'speaking')
   const id = listenId
   await speak($, spoken.slice(0, 4000))
   if (isActive && id === listenId) await listen($)
@@ -108,15 +117,31 @@ export const register: Register = on => {
       turnOff($, 'Voice mode paused. Run /talk to resume.')
       return result
     }
-    if (e.reason === 'answer') {
-      const answer = e.answer
-      $.clock.after(0, () => void respond($, answer))
-    }
+    const answer = e.reason === 'answer' ? e.answer : undefined
+    $.clock.after(0, () => void (answer === undefined ? listen($) : respond($, answer)))
     return result
   })
 
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const current = await read($, phase)
+    if (!current || e.props.hasSurvey) return next(e)
+    if (e.surface === 'terminal' || e.surface === 'desktop') {
+      const { Client } = $.ui.resolve(e)
+      return <Client key="voice" module="./indicator.tsx" props={{ phase: current }} />
+    }
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box>
+        <Text color="green">Voice: {current}</Text>
+      </Box>
+    )
+  })
+
   on('prompt.submit', async ($, e, next) => {
-    if (isActive && e.origin.kind === 'composer') stopRecording($)
+    if (isActive && e.origin.kind === 'composer') {
+      stopRecording($)
+      show($, 'working')
+    }
     return next(e)
   })
 

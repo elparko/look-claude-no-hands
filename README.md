@@ -49,7 +49,7 @@ On first use, the Whisper speech model (about 1.5 GB) and the Kokoro voice model
 
 Voice mode also turns off after 3 minutes with no speech.
 
-The status line shows what it is doing: `listening`, `working`, `preparing reply` or `speaking`.
+An animated indicator above the prompt shows what it is doing: a moving green wave while listening, a cyan wave while speaking, and a spinner while Claude is working or preparing the spoken reply.
 
 ## How it works
 
@@ -81,7 +81,8 @@ NO_HANDS_VOICE=bm_george ./speak.sh "Testing the British voice."
 ## Files
 
 ```
-hooks/register.ts        the mod: /talk command, turn-end handling, the listen loop
+hooks/register.tsx       the mod: /talk command, turn-end handling, the listen loop
+hooks/indicator.tsx      the animated indicator above the prompt
 listen.sh                plays the tone, records, transcribes, prints the text
 speak.sh                 turns text into audio with Kokoro and plays it
 tests/register.test.ts   behavior tests
