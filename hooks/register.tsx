@@ -7,16 +7,18 @@ const phase = atom({ plugin: 'no-hands', key: 'phase' } as const, null)
 const words = atom({ plugin: 'no-hands', key: 'words' } as const, '')
 
 const VOICE_SECTION =
-  'Voice mode is on: the user talks to you by voice and hears your replies read aloud. ' +
-  'When a request needs tool calls, start with one short sentence, before the first tool call, ' +
-  'saying what you understood and what you are about to do, in plain spoken words with no code, ' +
-  'file paths or markdown.'
+  'Voice mode is on: the user hears your replies read aloud. ' +
+  'When a request needs tool calls, write one sentence before the first tool call that starts with ' +
+  '"Plan:" and names the steps in under 12 plain words, for example "Plan: run the tests, then push." ' +
+  'No code, file paths or markdown in it.'
 
 const SPOKEN_PROMPT =
-  'Voice mode is on. Say out loud what you did and what you found in this turn, the way you would ' +
-  'tell me in conversation: 1 to 3 short sentences in plain words. No code, file paths, URLs, ' +
-  'markdown, or lists. If you need an answer or a decision from me, end with that question. ' +
-  'Output only the words to speak.'
+  'Voice mode is on. Write what I will hear about this turn, in as few words as possible. ' +
+  'If you did work, start with "Done:" and say what you did and the result in one or two short sentences, ' +
+  'for example "Done: all tests passed and it is pushed." ' +
+  'If you only answered a question, give the answer in one or two short sentences. ' +
+  'Plain words only: no code, file paths, URLs, markdown, or lists. ' +
+  'If you need a decision from me, end with one short question. Output only the words to speak.'
 
 const DISCARD = /^\W*never ?mind\W*$/i
 

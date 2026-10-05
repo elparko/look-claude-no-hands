@@ -2,7 +2,7 @@
 
 Hands-free voice mode for Claude Code on macOS.
 
-Type `/talk` once. After that you talk to Claude and it talks back. When a request needs work, Claude first says what it understood and what it is about to do. When the turn ends, it says what it did and what it found, then listens for your answer. You don't press anything.
+Type `/talk` once. After that you talk to Claude and it talks back. When a request needs work, Claude first says its plan ("Plan: run the tests, then push."). When the turn ends, it says what it did ("Done: all tests passed and it is pushed."), then listens for your answer. You don't press anything.
 
 ## Install
 
@@ -46,8 +46,8 @@ An animated indicator above the prompt shows what it is doing: a green wave whil
 
 1. **Listen.** The server plays a tone and records from the default microphone. Recording starts when sound goes above 3% volume and ends after 3 seconds below it, or as soon as you say "go ahead". About once a second, Whisper large-v3-turbo transcribes what you have said so far, and the indicator shows it.
 2. **Submit.** The final transcript is submitted as your prompt. Transcripts with no words in them, which Whisper produces from background noise, are ignored.
-3. **First reply.** While voice mode is on, the mod adds one paragraph to the system prompt asking Claude to start with one plain sentence saying what it understood and what it will do. The mod speaks that sentence as soon as Claude makes its first tool call.
-4. **Last reply.** When the turn ends, the mod sends a copy of the conversation, with the same model, one extra request: say what you did and what you found in 1 to 3 spoken sentences, and end with any question for me. Most of that request is served from the prompt cache. The reply on screen is unchanged.
+3. **First reply.** While voice mode is on, the mod adds one paragraph to the system prompt asking Claude to start with one sentence beginning "Plan:", under 12 words. The mod speaks that sentence as soon as Claude makes its first tool call.
+4. **Last reply.** When the turn ends, the mod sends a copy of the conversation, with the same model, one extra request: say "Done:" plus what was done and the result in one or two short sentences, or just the answer for a question, and end with a question only when a decision is needed. Most of that request is served from the prompt cache. The reply on screen is unchanged.
 5. **Speak.** Kokoro, an 82-million-parameter text-to-speech model, turns each sentence into audio and plays it. The first sentence starts in under a second. If the server cannot speak, the macOS `say` voice reads it instead.
 
 No audio leaves the machine.
