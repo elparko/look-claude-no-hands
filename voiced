@@ -1,0 +1,16 @@
+#!/bin/zsh
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+here=${0:A:h}
+sock=$1
+log=${TMPDIR:-/tmp}/no-hands-voiced.log
+up() { curl -s -m 2 --unix-socket $sock http://voice/health >/dev/null }
+
+up && exit 0
+nohup uv run --quiet --script $here/voiced.py $sock >$log 2>&1 &
+server=$!
+for i in {1..600}; do
+  up && exit 0
+  kill -0 $server 2>/dev/null || { tail -3 $log; exit 1 }
+  sleep 1
+done
+exit 1

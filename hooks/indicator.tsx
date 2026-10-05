@@ -6,7 +6,8 @@ const BARS = '▁▂▃▄▅▆▇█'
 const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 
 const LOOK: Record<VoicePhase, { label: string; hint: string; color: string; isWave: boolean }> = {
-  listening: { label: 'Listening', hint: 'say "stop listening" to end', color: 'green', isWave: true },
+  loading: { label: 'Loading voice models', hint: 'about 10 seconds', color: 'magenta', isWave: false },
+  listening: { label: 'Listening', hint: 'pause or say "go ahead" to send', color: 'green', isWave: true },
   speaking: { label: 'Speaking', hint: 'type to interrupt', color: 'cyan', isWave: true },
   working: { label: 'Working', hint: '', color: 'magenta', isWave: false },
   preparing: { label: 'Preparing reply', hint: '', color: 'magenta', isWave: false },
@@ -21,7 +22,7 @@ function wave(frame: number) {
   return out
 }
 
-const Indicator: ClientModule<{ phase: VoicePhase }, number> = (props, surface) => {
+const Indicator: ClientModule<{ phase: VoicePhase; words: string }, number> = (props, surface) => {
   if (surface.state === undefined) {
     let frame = 0
     surface.setState(0)
@@ -33,10 +34,13 @@ const Indicator: ClientModule<{ phase: VoicePhase }, number> = (props, surface) 
   const glyph = look.isWave ? wave(frame) : SPINNER[frame % SPINNER.length]
 
   return (
-    <Box>
-      <Text color={look.color}>{glyph} </Text>
-      <Text color={look.color} bold>{look.label}</Text>
-      {look.hint ? <Text dimColor>  {look.hint}</Text> : null}
+    <Box flexDirection="column">
+      <Box>
+        <Text color={look.color}>{glyph} </Text>
+        <Text color={look.color} bold>{look.label}</Text>
+        {look.hint ? <Text dimColor>  {look.hint}</Text> : null}
+      </Box>
+      {props.words ? <Text italic>{props.words.length > 400 ? `…${props.words.slice(-400)}` : props.words}</Text> : null}
     </Box>
   )
 }
