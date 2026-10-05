@@ -315,7 +315,7 @@ export const register: Register = on => {
     const waiting = await read($, queue)
     if (e.surface === 'terminal' || e.surface === 'desktop') {
       const { Client } = $.ui.resolve(e)
-      return <Client key="voice" module="./indicator.tsx" props={{ phase: current, words: said, reply: spoken, queue: [...waiting] }} />
+      return <Client key="voice" module="./indicator.tsx" width="100%" props={{ phase: current, words: said, reply: spoken, queue: [...waiting] }} />
     }
     const { Box, Text } = $.ui.resolve(e)
     return (

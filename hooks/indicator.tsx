@@ -33,24 +33,36 @@ const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string;
   const look = LOOK[props.phase]
   const glyph = look.isWave ? wave(frame) : SPINNER[frame % SPINNER.length]
 
+  const tail = (text: string) => (text.length > 400 ? `…${text.slice(-400)}` : text)
+
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" borderStyle="round" borderColor={look.color} paddingX={1} width="100%">
+      <Box justifyContent="space-between">
+        <Box>
+          <Text color={look.color}>{glyph} </Text>
+          <Text color={look.color} bold>{look.label}</Text>
+        </Box>
+        {look.hint ? <Text dimColor>{look.hint}</Text> : null}
+      </Box>
       {props.reply ? (
-        <Box borderStyle="round" borderColor="cyan" paddingX={1}>
-          <Text>{props.reply}</Text>
+        <Box marginTop={1}>
+          <Text color="cyan" bold>Claude  </Text>
+          <Text>{tail(props.reply)}</Text>
         </Box>
       ) : null}
-      <Box>
-        <Text color={look.color}>{glyph} </Text>
-        <Text color={look.color} bold>{look.label}</Text>
-        {look.hint ? <Text dimColor>  {look.hint}</Text> : null}
-      </Box>
-      {props.words ? <Text italic>{props.words.length > 400 ? `…${props.words.slice(-400)}` : props.words}</Text> : null}
+      {props.words ? (
+        <Box marginTop={1}>
+          <Text color="green" bold>You     </Text>
+          <Text italic>{tail(props.words)}</Text>
+        </Box>
+      ) : null}
       {props.queue.length > 0 ? (
-        <Box flexDirection="column">
-          <Text dimColor>Waiting for Claude's next step:</Text>
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>Waiting for Claude's next step</Text>
           {props.queue.map((item, i) => (
-            <Text key={`q${i}`}>  {i + 1}. {item}</Text>
+            <Text key={`q${i}`}>
+              {i + 1}. {item}
+            </Text>
           ))}
         </Box>
       ) : null}

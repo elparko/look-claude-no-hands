@@ -42,7 +42,7 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and th
 
 Use headphones. With speakers, the microphone hears Claude's voice and can mistake it for you interrupting. If you use speakers, raise `NO_HANDS_BARGE`.
 
-Above the prompt, a box shows the last thing Claude said, and a line under it shows what is happening: a green wave while listening, with your words as you say them; a cyan wave while Claude speaks; a spinner while it works.
+Above the prompt, one panel shows what is happening: a green wave while listening, a cyan wave while Claude speaks, and a spinner while it works. Under that it shows the last thing Claude said, your words as you say them, and anything waiting for Claude. The border color follows the state.
 
 ## How it works
 
