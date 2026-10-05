@@ -40,6 +40,7 @@ LEVEL = float(os.environ.get("NO_HANDS_LEVEL", "0.03"))
 WAIT_LIMIT = 180
 MAX_TURN = 120
 PARTIAL_EVERY = 1.0
+NO_SPEECH = 0.5
 TONE = "/System/Library/Sounds/Tink.aiff"
 GO_AHEAD = re.compile(r"[\s,.]*\bgo ahead\W*$", re.I)
 
@@ -83,7 +84,8 @@ def transcribe(audio: np.ndarray) -> str:
     result = whisper.transcribe(
         audio, path_or_hf_repo=WHISPER, language="en", condition_on_previous_text=False
     )
-    return result["text"].strip()
+    spoken = [seg["text"] for seg in result["segments"] if seg["no_speech_prob"] < NO_SPEECH]
+    return "".join(spoken).strip()
 
 
 def synthesize(text: str):

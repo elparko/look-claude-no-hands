@@ -7,18 +7,24 @@ const phase = atom({ plugin: 'no-hands', key: 'phase' } as const, null)
 const words = atom({ plugin: 'no-hands', key: 'words' } as const, '')
 
 const VOICE_SECTION =
-  'Voice mode is on: the user hears your replies read aloud. ' +
-  'When a request needs tool calls, write one sentence before the first tool call that starts with ' +
-  '"Plan:" and names the steps in under 12 plain words, for example "Plan: run the tests, then push." ' +
-  'No code, file paths or markdown in it.'
+  'Voice mode is on: the user is talking with you out loud and hears your text read aloud. ' +
+  'Talk the way a sharp colleague would across the desk. ' +
+  'Answer questions directly, in a sentence or two, unless they ask you to explain more. ' +
+  'Before work that needs tool calls, give a one-sentence heads-up of what you are about to do, in plain words. ' +
+  'During long work, a short line between steps when something worth knowing happens: a result, a surprise, a change of plan. ' +
+  'Never restate the request, narrate routine steps, hedge, or add caveats that do not change what the user should do. ' +
+  'No code, file paths or markdown in anything meant to be heard.'
 
 const SPOKEN_PROMPT =
-  'Voice mode is on. Write what I will hear about this turn, in as few words as possible. ' +
-  'If you did work, start with "Done:" and say what you did and the result in one or two short sentences, ' +
-  'for example "Done: all tests passed and it is pushed." ' +
-  'If you only answered a question, give the answer in one or two short sentences. ' +
-  'Plain words only: no code, file paths, URLs, markdown, or lists. ' +
-  'If you need a decision from me, end with one short question. Output only the words to speak.'
+  'I am listening, not reading. Tell me what matters from this turn the way a sharp colleague would across the desk. ' +
+  'If I asked a question, answer it. If you did work, lead with the result and anything I need to know: ' +
+  'a failure, a surprise, or a decision for me. ' +
+  'Skip what I already know: do not restate my request, list steps, or read out code, file paths, URLs or numbers I do not need. ' +
+  'Usually one to three sentences; more only if I asked for an explanation. No labels, no lists, no filler. ' +
+  'Ask a question only if you need a decision from me. Output only the words to speak.'
+
+const UPDATE_GAP_MS = 20_000
+const SHORT_ANSWER = 300
 
 const DISCARD = /^\W*never ?mind\W*$/i
 
@@ -27,6 +33,7 @@ type Heard = { partial?: string; final?: string; timeout?: boolean; stopped?: bo
 let isActive = false
 let listenId = 0
 let speech: Promise<void> = Promise.resolve()
+let lastSpokenAt = 0
 
 function socket($: EngineInterface) {
   return `${$.plugin.root}/.voiced.sock`
@@ -50,6 +57,7 @@ function plain(text: string) {
 
 function speak($: EngineInterface, text: string) {
   const id = listenId
+  lastSpokenAt = Date.now()
   speech = speech.then(async () => {
     if (!text || id !== listenId || !isActive) return
     if ((await call($, '/speak', text)) === undefined) await $.audio.speak(text).catch(() => {})
@@ -112,11 +120,18 @@ async function listen($: EngineInterface) {
   hear($, '')
 }
 
+function isSpeakable(answer: string) {
+  return answer.length <= SHORT_ANSWER && !/[`#*|\[\]/<>]|\n\s*[-\d]/.test(answer)
+}
+
 async function respond($: EngineInterface, answer: string) {
   show($, 'preparing')
-  const forked = await $.model.fork({ prompt: SPOKEN_PROMPT }).catch(() => undefined)
+  let spoken = answer.trim()
+  if (!isSpeakable(spoken)) {
+    const forked = await $.model.fork({ prompt: SPOKEN_PROMPT }).catch(() => undefined)
+    spoken = forked?.isAnswered ? forked.text.trim() : plain(answer) || 'Done.'
+  }
   if (!isActive) return
-  const spoken = forked?.isAnswered ? forked.text.trim() : plain(answer) || 'Done.'
   show($, 'speaking')
   const id = listenId
   await speak($, spoken.slice(0, 4000))
@@ -159,14 +174,23 @@ export const register: Register = on => {
     return { ...result, sections: [...result.sections, { id: 'no-hands-voice', text: VOICE_SECTION, scope: 'session' as const }] }
   })
 
+  on('turn.start', async ($, e, next) => {
+    if (isActive && (await read($, phase)) === 'listening') {
+      interrupt($)
+      hear($, '')
+      show($, 'working')
+    }
+    return next(e)
+  })
+
   on('turn.step', async function* ($, e, next) {
-    if (!isActive || e.agentId !== undefined || e.index !== 0) return yield* next(e)
-    let preface = ''
-    const steps = next(e)
-    for await (const chunk of steps) {
-      if (chunk.kind === 'text') preface += chunk.text
-      if (chunk.kind === 'stop' && chunk.stopReason === 'tool_use') {
-        const sentences = plain(preface).match(/[^.!?]+[.!?]?/g) ?? []
+    if (!isActive || e.agentId !== undefined) return yield* next(e)
+    const isDue = e.index === 0 || Date.now() - lastSpokenAt >= UPDATE_GAP_MS
+    let said = ''
+    for await (const chunk of next(e)) {
+      if (chunk.kind === 'text') said += chunk.text
+      if (chunk.kind === 'stop' && chunk.stopReason === 'tool_use' && isDue) {
+        const sentences = plain(said).match(/[^.!?]+[.!?]?/g) ?? []
         void speak($, sentences.slice(0, 2).join(' ').trim())
       }
       yield chunk

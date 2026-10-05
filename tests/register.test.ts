@@ -138,3 +138,14 @@ test('the band above the prompt shows the voice state only while voice mode is o
     await $.command.run(talk)
   }
 })
+
+test('a short plain answer is spoken as written, without a rewrite', async ($, on) => {
+  const w = world(on, 'thanks')
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  w.spoken.length = 0
+
+  await $.turn.complete({ ...turn, answer: 'It runs every night at two, on the runner Mac.' })
+  await w.clock.advance(0)
+  expect(w.spoken).toEqual(['It runs every night at two, on the runner Mac.'])
+})
