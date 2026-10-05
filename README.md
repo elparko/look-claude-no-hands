@@ -62,7 +62,7 @@ No audio leaves the machine.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `NO_HANDS_VOICE` | `af_heart` | Kokoro voice. The first letter sets the accent: `a` American, `b` British. The second sets female or male. Examples: `af_bella`, `am_michael`, `bf_emma`, `bm_george`. |
+| `NO_HANDS_VOICE` | `af_bella` | Kokoro voice. The first letter sets the accent: `a` American, `b` British. The second sets female or male. Examples: `af_heart`, `am_michael`, `bf_emma`, `bm_george`. |
 | `NO_HANDS_SPEED` | `1.0` | Speaking rate. `1.2` is 20% faster. |
 | `NO_HANDS_PAUSE` | `3.0` | Seconds of silence that send what you said. |
 | `NO_HANDS_LEVEL` | `0.03` | Volume, from 0 to 1, that counts as speech. Raise it in a loud room. |

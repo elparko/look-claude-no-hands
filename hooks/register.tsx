@@ -45,7 +45,7 @@ let micLevel: string | undefined
 let voiceName: string | undefined
 
 const VOICES =
-  'American women: af_heart (default), af_bella, af_nicole, af_sarah, af_nova, af_sky. ' +
+  'American women: af_bella (default), af_heart, af_nicole, af_sarah, af_nova, af_sky. ' +
   'American men: am_michael, am_fenrir, am_puck, am_eric, am_liam, am_adam. ' +
   'British women: bf_emma, bf_isabella, bf_alice, bf_lily. British men: bm_george, bm_fable, bm_lewis, bm_daniel.'
 let speech: Promise<void> = Promise.resolve()
