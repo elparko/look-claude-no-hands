@@ -2,6 +2,6 @@ export type VoicePhase = 'loading' | 'listening' | 'working' | 'preparing' | 'sp
 
 declare module 'claude-code' {
   interface PluginState {
-    'no-hands': { phase: VoicePhase | null; words: string; reply: string }
+    'no-hands': { phase: VoicePhase | null; words: string; reply: string; queue: string[] }
   }
 }

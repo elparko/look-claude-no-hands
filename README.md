@@ -30,8 +30,9 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and th
 | Action | How |
 |---|---|
 | Start | Type `/talk` |
-| Say something | Just talk. Pause for 3 seconds, or end with "go ahead", to send it. |
-| Add something while Claude works | Just talk. Claude gets it after its next step; if the turn ends first, it is sent as your next prompt. |
+| Say something | Just talk. Pause for 3 seconds to send it. A short pop plays when it is sent. |
+| Add something while Claude works | Just talk. It waits in a numbered list above the prompt until Claude's next step; if the turn ends first, it is sent as your next prompt. |
+| Ignore more background sound | `/talk level 0.05` (default 0.03). Takes effect at once. |
 | Interrupt Claude's speech | Start talking. It stops right away. |
 | Discard what you just said | Say "never mind" |
 | Type instead | Type a prompt. Speech stops; voice mode stays on. |
@@ -46,7 +47,7 @@ Above the prompt, a box shows the last thing Claude said, and a line under it sh
 
 `voiced.py` is a small local server that keeps both speech models loaded and the microphone open. `/talk` starts it through the `voiced` launcher, and the mod talks to it over a Unix socket. It quits when voice mode turns off, or after 15 minutes with no connection.
 
-1. **Listen.** Speech starts when sound goes above 3% volume and ends after 3 seconds below it, or as soon as you say "go ahead". About once a second, Whisper large-v3-turbo transcribes what you have said so far, and the indicator shows it. Segments Whisper rates as likely not speech, and transcripts with no words, are dropped.
+1. **Listen.** Speech starts when sound goes above 3% volume and ends after 3 seconds below it. About once a second, Whisper large-v3-turbo transcribes what you have said so far, and the indicator shows it. To keep stray sound out, the server drops: sound louder than the threshold for less than 0.4 seconds in total; segments Whisper rates as likely not speech or as repetitive (its usual way of hallucinating on noise); and transcripts made only of filler like "Thank you." or "you".
 2. **Send.** If Claude is idle, your words are submitted as your prompt. If it is working, they are added to the next tool result as a note from you, which Claude reads mid-task.
 3. **Heads-up and updates.** While voice mode is on, the mod adds one paragraph to the system prompt asking Claude to talk like a colleague: answer directly, give a one-sentence heads-up before tool work, and mention only what is worth knowing during long work. The mod speaks the heads-up at the first tool call, and later notes at most every 20 seconds.
 4. **Reply.** A short plain answer is spoken as written. A longer one is rewritten for speech first: the mod sends a copy of the conversation, with the same model, asking for the result and anything you need to know in one to three sentences. Most of that request is served from the prompt cache. The reply on screen is unchanged.

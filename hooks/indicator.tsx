@@ -7,7 +7,7 @@ const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 
 const LOOK: Record<VoicePhase, { label: string; hint: string; color: string; isWave: boolean }> = {
   loading: { label: 'Loading voice models', hint: 'about 10 seconds', color: 'magenta', isWave: false },
-  listening: { label: 'Listening', hint: 'pause or say "go ahead" to send', color: 'green', isWave: true },
+  listening: { label: 'Listening', hint: 'pause to send', color: 'green', isWave: true },
   speaking: { label: 'Speaking', hint: 'talk to interrupt', color: 'cyan', isWave: true },
   working: { label: 'Working', hint: 'talk any time', color: 'magenta', isWave: false },
   preparing: { label: 'Preparing reply', hint: '', color: 'magenta', isWave: false },
@@ -22,7 +22,7 @@ function wave(frame: number) {
   return out
 }
 
-const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string }, number> = (props, surface) => {
+const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string; queue: string[] }, number> = (props, surface) => {
   if (surface.state === undefined) {
     let frame = 0
     surface.setState(0)
@@ -46,6 +46,14 @@ const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string 
         {look.hint ? <Text dimColor>  {look.hint}</Text> : null}
       </Box>
       {props.words ? <Text italic>{props.words.length > 400 ? `…${props.words.slice(-400)}` : props.words}</Text> : null}
+      {props.queue.length > 0 ? (
+        <Box flexDirection="column">
+          <Text dimColor>Waiting for Claude's next step:</Text>
+          {props.queue.map((item, i) => (
+            <Text key={`q${i}`}>  {i + 1}. {item}</Text>
+          ))}
+        </Box>
+      ) : null}
     </Box>
   )
 }

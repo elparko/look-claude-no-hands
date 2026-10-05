@@ -16,6 +16,7 @@ import queue
 import re
 import socket
 import socketserver
+import subprocess
 import sys
 import threading
 import time
@@ -35,13 +36,16 @@ KOKORO = "mlx-community/Kokoro-82M-bf16"
 VOICE = os.environ.get("NO_HANDS_VOICE", "af_heart")
 SPEED = float(os.environ.get("NO_HANDS_SPEED", "1.0"))
 PAUSE = float(os.environ.get("NO_HANDS_PAUSE", "3.0"))
-LEVEL = float(os.environ.get("NO_HANDS_LEVEL", "0.03"))
-BARGE = float(os.environ.get("NO_HANDS_BARGE", str(LEVEL * 2)))
+level = {"speech": float(os.environ.get("NO_HANDS_LEVEL", "0.03"))}
+level["barge"] = float(os.environ.get("NO_HANDS_BARGE", str(level["speech"] * 2)))
 HEARTBEAT = 5
 MAX_TURN = 120
 PARTIAL_EVERY = 1.0
 NO_SPEECH = 0.5
-GO_AHEAD = re.compile(r"[\s,.]*\bgo ahead\W*$", re.I)
+REPETITIVE = 2.4
+SENT_SOUND = "/System/Library/Sounds/Pop.aiff"
+MIN_SPEECH = 0.4
+NOISE = {"thank you", "thanks", "thank you so much", "thanks for watching", "thank you for watching", "you", "bye", "okay", "uh", "um", "hmm"}
 
 IDLE_LIMIT = 15 * 60
 
@@ -86,8 +90,14 @@ def transcribe(audio: np.ndarray) -> str:
     result = whisper.transcribe(
         audio, path_or_hf_repo=WHISPER, language="en", condition_on_previous_text=False
     )
-    spoken = [seg["text"] for seg in result["segments"] if seg["no_speech_prob"] < NO_SPEECH]
-    return "".join(spoken).strip()
+    spoken = [
+        seg["text"]
+        for seg in result["segments"]
+        if seg["no_speech_prob"] < NO_SPEECH and seg["compression_ratio"] <= REPETITIVE
+    ]
+    text = "".join(spoken).strip()
+    phrases = [p.strip().lower() for p in re.split(r"[.!?,]+", text) if p.strip()]
+    return "" if all(p in NOISE for p in phrases) else text
 
 
 def synthesize(text: str):
@@ -130,9 +140,9 @@ def listen(send):
         heard: list[np.ndarray] = []
         quiet = 0.0
         last_beat = last_partial = time.monotonic()
+        loud_time = 0.0
         partial: list[Future | None] = [None]
         is_finishing = threading.Event()
-        is_go_ahead = threading.Event()
 
         def start_partial(audio):
             done: Future = Future()
@@ -141,10 +151,8 @@ def listen(send):
             def run():
                 try:
                     text = on_model_thread(transcribe, audio)
-                    if GO_AHEAD.search(text):
-                        is_go_ahead.set()
                     if not is_finishing.is_set():
-                        send({"partial": GO_AHEAD.sub("", text)})
+                        send({"partial": text})
                 finally:
                     done.set_result(None)
 
@@ -161,8 +169,8 @@ def listen(send):
                 send({"beat": True})
             if block is None:
                 continue
-            level = float(np.abs(block).max())
-            is_loud = level > (BARGE if playing.is_set() else LEVEL)
+            peak = float(np.abs(block).max())
+            is_loud = peak > (level["barge"] if playing.is_set() else level["speech"])
             if not heard:
                 before.append(block)
                 if is_loud:
@@ -172,8 +180,12 @@ def listen(send):
                     send({"start": True})
                 continue
             heard.append(block)
-            quiet = 0.0 if level > LEVEL else quiet + BLOCK
-            if quiet >= PAUSE or is_go_ahead.is_set() or len(heard) * BLOCK >= MAX_TURN:
+            if peak > level["speech"]:
+                quiet = 0.0
+                loud_time += BLOCK
+            else:
+                quiet += BLOCK
+            if quiet >= PAUSE or len(heard) * BLOCK >= MAX_TURN:
                 break
             busy = partial[0] is not None and not partial[0].done()
             if now - last_partial >= PARTIAL_EVERY and not busy:
@@ -183,7 +195,9 @@ def listen(send):
         is_finishing.set()
         if partial[0] is not None:
             partial[0].result()
-        text = GO_AHEAD.sub("", on_model_thread(transcribe, np.concatenate(heard)))
+        text = on_model_thread(transcribe, np.concatenate(heard)) if loud_time >= MIN_SPEECH else ""
+        if text:
+            subprocess.Popen(["afplay", SENT_SOUND])
         send({"final": text})
         user_talking.clear()
 
@@ -253,6 +267,10 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length).decode()
         if self.path == "/speak":
             return self.reply(speak(body))
+        if self.path == "/level":
+            level["speech"] = float(body)
+            level["barge"] = level["speech"] * 2
+            return self.reply("ok")
         if self.path == "/stop":
             stop.set()
             return self.reply("ok")

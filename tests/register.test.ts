@@ -171,3 +171,25 @@ test('the band shows the last spoken reply in a box', { timeoutMs: 20_000 }, asy
   await ui.unmount()
   await $.command.run(talk)
 })
+
+test('words said while Claude works show as a numbered queue', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, ['also check the runner', 'and the logs'])
+  on('ui.render', ($, e) => $.ui.resolve(e).Box({}))
+  await $.command.run(talk)
+  await $.turn.start({ text: 'run the tests', turnId: 't1' } as never)
+  await w.clock.advance(0)
+  const ui = await $.ui.mount({ ...band, surface: 'terminal' })
+  const tree = JSON.stringify(await ui.drawn({ in: 'voice' }))
+  expect(tree).toContain('also check the runner')
+  expect(tree).toContain('and the logs')
+  await ui.unmount()
+  await $.command.run(talk)
+})
+
+test('/talk level sets the mic level and rejects bad values', async ($, on) => {
+  world(on, [])
+  const bad = await $.command.run({ ...talk, args: 'level loud' })
+  expect(JSON.stringify(bad)).toContain('Usage')
+  const good = await $.command.run({ ...talk, args: 'level 0.06' })
+  expect(JSON.stringify(good)).toContain('0.06')
+})

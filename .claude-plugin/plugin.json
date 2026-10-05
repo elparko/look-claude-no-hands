@@ -1,6 +1,6 @@
 {
   "name": "no-hands",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Hands-free voice mode for Claude Code: speaks each reply, then records and submits your answer",
   "author": { "name": "Parker Smith" },
   "types": "./types/index.d.ts"

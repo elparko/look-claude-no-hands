@@ -6,6 +6,7 @@ import type { VoicePhase } from '../types'
 const phase = atom({ plugin: 'no-hands', key: 'phase' } as const, null)
 const words = atom({ plugin: 'no-hands', key: 'words' } as const, '')
 const reply = atom({ plugin: 'no-hands', key: 'reply' } as const, '')
+const queue = atom({ plugin: 'no-hands', key: 'queue' } as const, [] as string[])
 
 const VOICE_SECTION =
   'Voice mode is on: the user is talking with you out loud and hears your text read aloud. ' +
@@ -40,6 +41,7 @@ let speechId = 0
 let sessionId = 0
 let lastSpokenAt = 0
 let pending: string[] = []
+let micLevel: string | undefined
 let speech: Promise<void> = Promise.resolve()
 
 function socket($: EngineInterface) {
@@ -89,6 +91,13 @@ function showReply($: EngineInterface, text: string) {
   void update($, reply, () => text)
 }
 
+function takePending($: EngineInterface) {
+  const text = pending.join('\n')
+  pending = []
+  void update($, queue, () => [])
+  return text
+}
+
 function speak($: EngineInterface, text: string) {
   const id = speechId
   lastSpokenAt = Date.now()
@@ -115,7 +124,7 @@ function turnOff($: EngineInterface, why?: string) {
   isHearing = false
   sessionId++
   speechId++
-  pending = []
+  takePending($)
   void call($, '/quit')
   refresh($)
   hear($, '')
@@ -128,7 +137,7 @@ function onHeard($: EngineInterface, text: string) {
   if (!/[a-z0-9]/i.test(text) || DISCARD.test(text)) return
   if (isWorking) {
     pending.push(text)
-    hear($, `Passing to Claude: ${pending.join(' ')}`)
+    void update($, queue, () => [...pending])
     return
   }
   isWorking = true
@@ -172,7 +181,8 @@ async function converse($: EngineInterface) {
 async function start($: EngineInterface) {
   refresh($)
   void update($, phase, () => 'loading')
-  const r = await $.process.run([`${$.plugin.root}/voiced`, socket($)], { timeoutMs: 600_000 }).catch(() => undefined)
+  const env: Record<string, string> = micLevel ? { NO_HANDS_LEVEL: micLevel } : {}
+  const r = await $.process.run([`${$.plugin.root}/voiced`, socket($)], { env, timeoutMs: 600_000 }).catch(() => undefined)
   if (!isActive) return
   if (r?.exitCode !== 0) return turnOff($, `Voice mode off: the voice server did not start. ${r?.stdout.trim() ?? ''}`)
   refresh($)
@@ -181,9 +191,7 @@ async function start($: EngineInterface) {
 
 async function respond($: EngineInterface, answer: string) {
   if (pending.length > 0) {
-    const text = pending.join(' ')
-    pending = []
-    hear($, '')
+    const text = takePending($)
     isWorking = true
     refresh($)
     void $.prompt.submit({ text, asUser: true })
@@ -210,7 +218,16 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'talk' }, async $ => {
+  on('command.run', { command: 'talk' }, async ($, e) => {
+    const [word, value] = e.args.trim().split(/\s+/)
+    if (word === 'level') {
+      if (!value || !(Number(value) > 0 && Number(value) < 1)) {
+        return { text: 'Usage: /talk level 0.05. A number from 0 to 1; the default is 0.03. Higher ignores more background sound.' }
+      }
+      micLevel = value
+      if (isActive) await call($, '/level', value)
+      return { text: `Mic level set to ${value}. Sound below it is ignored.` }
+    }
     if (isActive) {
       turnOff($)
       return { text: 'Voice mode off.' }
@@ -218,7 +235,7 @@ export const register: Register = on => {
     isActive = true
     isWorking = false
     $.clock.after(0, () => void start($))
-    return { text: 'Voice mode on. Talk any time; pause or say "go ahead" to send. Run /talk again to end it.' }
+    return { text: 'Voice mode on. Talk any time; pause to send. /talk level 0.05 ignores more background sound. Run /talk again to end it.' }
   })
 
   on('prompt.compose', async ($, e, next) => {
@@ -253,9 +270,7 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     const result = await next(e)
     if (!isActive || e.agentId !== undefined || pending.length === 0 || result.deny !== undefined) return result
-    const text = pending.join(' ')
-    pending = []
-    hear($, '')
+    const text = takePending($)
     const note = `The user just said this out loud while you were working: "${text}". Treat it as a message from them now.`
     return { ...result, context: [...(result.context ?? []), note] }
   })
@@ -279,9 +294,10 @@ export const register: Register = on => {
     if (!current || e.props.hasSurvey) return next(e)
     const said = await read($, words)
     const spoken = await read($, reply)
+    const waiting = await read($, queue)
     if (e.surface === 'terminal' || e.surface === 'desktop') {
       const { Client } = $.ui.resolve(e)
-      return <Client key="voice" module="./indicator.tsx" props={{ phase: current, words: said, reply: spoken }} />
+      return <Client key="voice" module="./indicator.tsx" props={{ phase: current, words: said, reply: spoken, queue: [...waiting] }} />
     }
     const { Box, Text } = $.ui.resolve(e)
     return (
@@ -289,6 +305,11 @@ export const register: Register = on => {
         {spoken ? <Text>{spoken}</Text> : null}
         <Text color="green">Voice: {current}</Text>
         {said ? <Text dimColor>{said}</Text> : null}
+        {waiting.map((item, i) => (
+          <Text key={`q${i}`} dimColor>
+            Waiting for Claude: {item}
+          </Text>
+        ))}
       </Box>
     )
   })
