@@ -1,0 +1,12 @@
+{
+  "name": "no-hands",
+  "description": "Hands-free voice mode for Claude Code",
+  "owner": { "name": "Parker Smith" },
+  "plugins": [
+    {
+      "name": "no-hands",
+      "source": "./",
+      "description": "Hands-free voice mode for Claude Code: speaks each reply, then records and submits your answer"
+    }
+  ]
+}
