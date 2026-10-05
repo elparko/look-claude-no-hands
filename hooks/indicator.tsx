@@ -30,7 +30,7 @@ function wave(frame: number) {
   return out
 }
 
-type Props = { phase: VoicePhase; words: string; reply: string; queue: string[]; sent: string; agents: (AgentRow & { depth: number })[] }
+type Props = { phase: VoicePhase; words: string; reply: string; queue: string[]; sent: string; agents: (AgentRow & { depth: number })[]; goal: string; loop: string }
 
 const Indicator: ClientModule<Props, number> = (props, surface) => {
   if (surface.state === undefined) {
@@ -46,6 +46,8 @@ const Indicator: ClientModule<Props, number> = (props, surface) => {
   const reply = props.reply ?? ''
   const sent = props.sent ?? ''
   const agents = props.agents ?? []
+  const goal = props.goal ?? ''
+  const loop = props.loop ?? ''
   const live = agents.filter(row => row.state === 'running' || row.state === 'idle')
   const shown = [...live, ...agents.filter(row => !live.includes(row))].slice(0, AGENT_ROWS)
   const now = Date.now()
@@ -63,6 +65,24 @@ const Indicator: ClientModule<Props, number> = (props, surface) => {
         </Box>
         {hint ? <Text dimColor>{hint}</Text> : null}
       </Box>
+      {goal || loop ? (
+        <Box flexDirection="column" marginTop={1}>
+          {goal ? (
+            <Box>
+              <Text color="yellow" bold>Goal    </Text>
+              <Text wrap="truncate-end">{goal}</Text>
+              <Text dimColor> · say "clear goal"</Text>
+            </Box>
+          ) : null}
+          {loop ? (
+            <Box>
+              <Text color="yellow" bold>Loop    </Text>
+              <Text wrap="truncate-end">{loop}</Text>
+              <Text dimColor> · say "stop loop"</Text>
+            </Box>
+          ) : null}
+        </Box>
+      ) : null}
       {sent ? (
         <Box marginTop={1}>
           <Text color="green" bold>Sent    </Text>

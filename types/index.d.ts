@@ -25,6 +25,8 @@ declare module 'claude-code' {
       queue: string[]
       sent: string
       agents: AgentRow[]
+      goal: string
+      loop: string
     }
   }
 }

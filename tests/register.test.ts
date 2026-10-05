@@ -488,6 +488,98 @@ test('a pending slash command drops on any reply that starts with no, cancel, or
   await $.command.run(talk)
 })
 
+const goalCmd = (args: string) => ({ ...talk, command: 'goal', args })
+
+function crons(on: On) {
+  const deleted: string[] = []
+  on('tool.call', (_$, e) => {
+    if (e.tool === 'CronList') return { result: { jobs: [{ id: 'c1', cron: '*/5 * * * *', humanSchedule: 'every 5 minutes', prompt: 'check CI', recurring: true }] }, text: '' } as never
+    if (e.tool === 'CronDelete') {
+      deleted.push(e.id)
+      return { result: { id: e.id }, text: 'ok' } as never
+    }
+    return { result: {}, text: 'ok' } as never
+  })
+  return deleted
+}
+
+function goals(on: On) {
+  const ran: string[] = []
+  on('command.run', (_$, e) => {
+    ran.push(`${e.command}|${e.args}`)
+    return { text: e.args === 'clear' ? 'Goal cleared: x' : `Goal set: ${e.args}` }
+  })
+  return ran
+}
+
+test('"clear goal" runs /goal clear once a goal is set', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran = goals(on)
+  const w = world(on, ['Clear the goal.', 'Clear goal.'])
+  await $.command.run(goalCmd('finish the tests'))
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(ran).toEqual(['goal|finish the tests', 'goal|clear'])
+  expect(w.spoken).toContain('Goal cleared.')
+  expect(w.spoken).toContain('No goal is set.')
+  await $.command.run(talk)
+})
+
+test('"stop loop" deletes the recurring cron jobs', { timeoutMs: 20_000 }, async ($, on) => {
+  const deleted = crons(on)
+  const w = world(on, ['Stop the loop.'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(deleted).toEqual(['c1'])
+  expect(w.spoken).toContain('Loop stopped.')
+  await $.command.run(talk)
+})
+
+test('"stop" also clears the goal and stops the loop', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran = goals(on)
+  const deleted = crons(on)
+  const aborted: string[] = []
+  on('turn.abort', (_$, e) => {
+    aborted.push(e.turnId)
+    return { value: undefined }
+  })
+  const w = world(on, ['Stop.'])
+  await $.command.run(goalCmd('finish the tests'))
+  await $.turn.start({ text: 'run the tests', turnId: 't1' } as never)
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(aborted).toEqual(['t1'])
+  expect(ran).toContain('goal|clear')
+  expect(deleted).toEqual(['c1'])
+  expect(w.spoken).toContain('Stopped, and cleared the goal and stopped the loop.')
+  await $.command.run(talk)
+})
+
+test('a slash command with no answer drops after 30 seconds', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran = goals(on)
+  on('command.list', () => ({ value: [{ name: 'goal', description: '', source: 'builtin' }] }) as never)
+  const w = world(on, ['Slash goal.'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  await w.clock.advance(30_000)
+  expect(ran).toEqual([])
+  expect(w.spoken).toContain('Dropped the goal command. No answer came.')
+  await $.command.run(talk)
+})
+
+test('a goal whose check ends the turn leaves the panel', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran = goals(on)
+  const w = world(on, ['Clear goal.'])
+  await $.command.run(goalCmd('finish the tests'))
+  await $.turn.start({ text: 'go', turnId: 't1' } as never)
+  await $.session.append({ message: { type: 'attachment', name: 'goal_status', content: [] }, door: 'attachment', origin: { kind: 'engine' } } as never).catch(() => {})
+  await $.turn.complete({ ...turn, answer: 'All tests pass.' })
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(ran).toEqual(['goal|finish the tests'])
+  expect(w.spoken).toContain('No goal is set.')
+  await $.command.run(talk)
+})
+
 test('words queued before "stop" are dropped, not sent with a later turn', { timeoutMs: 20_000 }, async ($, on) => {
   on('turn.abort', () => ({ value: undefined }))
   const w = world(on, ['also check the logs', 'Stop.'])

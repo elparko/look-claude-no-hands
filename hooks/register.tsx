@@ -9,6 +9,8 @@ const reply = atom({ plugin: 'no-hands', key: 'reply' } as const, '')
 const queue = atom({ plugin: 'no-hands', key: 'queue' } as const, [] as string[])
 const sent = atom({ plugin: 'no-hands', key: 'sent' } as const, '')
 const agents = atom({ plugin: 'no-hands', key: 'agents' } as const, [] as AgentRow[])
+const goal = atom({ plugin: 'no-hands', key: 'goal' } as const, '')
+const loop = atom({ plugin: 'no-hands', key: 'loop' } as const, '')
 
 const VOICE_SECTION =
   'Voice mode is on: the user is talking with you out loud and hears your text read aloud. ' +
@@ -54,6 +56,10 @@ const FINISH_GAP_MS = 4_000
 const SLASH = /(?:\bslash\s+|(?:^|\s)\/(?=\w))(.+)$/i
 const FILLER = /^\W*(?:(?:okay|ok|so|alright|um|uh|and|then)\b\W*)+/i
 const YES = /^\W*(yes|yeah|yep|yup|sure|ok(ay)?|go( ahead)?|do it|start( it)?|run it|(we('re)? )?good|sounds good|correct|right)\W*$/i
+const GOAL_CLEAR = /^\W*(?:(?:okay|ok|so|hey)\W+)*(?:clear|stop|end|cancel|drop|remove|delete)\s+(?:the\s+)?goal\W*$/i
+const LOOP_STOP = /^\W*(?:(?:okay|ok|so|hey)\W+)*(?:stop|end|cancel|kill|clear)\s+(?:the\s+)?loops?\W*$/i
+const GOAL_OFF = new Set(['clear', 'stop', 'off', 'reset', 'none', 'cancel'])
+const CONFIRM_MS = 30_000
 const NO = /^\W*(?:(?:okay|ok|so|um|uh|oh)\W+)*(?:no|nope|cancel|drop|stop|forget|scratch|never ?mind|don'?t)\b/i
 
 const NUMBERS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
@@ -77,6 +83,8 @@ let whisperModel: string | undefined
 let pendingCommand: { name: string; args: string } | undefined
 let finished: AgentRow[] = []
 let isFinishDue = false
+let isGoalChecked = false
+let wakeAt = 0
 
 const MODELS = 'turbo (1.6 GB, default, most accurate), small (480 MB), base (145 MB), tiny (75 MB, most mistakes)'
 
@@ -203,7 +211,50 @@ async function stopWork($: EngineInterface) {
   await $.turn.abort({ turnId }).catch(() => {})
 }
 
+async function clearGoal($: EngineInterface) {
+  if (!(await read($, goal))) return false
+  await $.command.run({ command: 'goal', args: 'clear' }).catch(() => {})
+  await update($, goal, () => '')
+  return true
+}
+
+async function cronJobs($: EngineInterface) {
+  const r = await $.tool.call({ tool: 'CronList' }).catch(() => undefined)
+  if (!r || r.deny !== undefined || r.isError) return []
+  return (r.result as { jobs?: { id: string; humanSchedule: string; recurring?: boolean }[] }).jobs ?? []
+}
+
+async function syncLoops($: EngineInterface) {
+  const recurring = (await cronJobs($)).filter(job => job.recurring !== false)
+  const at = new Date(wakeAt)
+  const next = wakeAt > Date.now() ? [`next run at ${at.getHours()}:${String(at.getMinutes()).padStart(2, '0')}`] : []
+  await update($, loop, () => [...recurring.map(job => job.humanSchedule), ...next].join(', '))
+}
+
+async function stopLoops($: EngineInterface) {
+  let stopped = 0
+  for (const job of (await cronJobs($)).filter(job => job.recurring !== false)) {
+    const r = await $.tool.call({ tool: 'CronDelete', id: job.id }).catch(() => undefined)
+    if (r && r.deny === undefined && !r.isError) stopped++
+  }
+  if (wakeAt > Date.now()) {
+    const r = await $.tool.call({ tool: 'ScheduleWakeup', stop: true }).catch(() => undefined)
+    if (r && r.deny === undefined && !r.isError) stopped++
+    wakeAt = 0
+  }
+  await update($, loop, () => '')
+  return stopped
+}
+
 async function control($: EngineInterface, text: string) {
+  if (GOAL_CLEAR.test(text)) {
+    void speak($, (await clearGoal($)) ? 'Goal cleared.' : 'No goal is set.')
+    return true
+  }
+  if (LOOP_STOP.test(text)) {
+    void speak($, (await stopLoops($)) > 0 ? 'Loop stopped.' : 'No loop is running.')
+    return true
+  }
   if (CANCEL.test(text)) {
     if (pending.length === 0) return false
     pending.pop()
@@ -225,7 +276,8 @@ async function control($: EngineInterface, text: string) {
   }
   if (STOP.test(text)) {
     await stopWork($)
-    void speak($, 'Stopped.')
+    const ended = [(await clearGoal($)) && 'cleared the goal', (await stopLoops($)) > 0 && 'stopped the loop'].filter(Boolean)
+    void speak($, ended.length ? `Stopped, and ${ended.join(' and ')}.` : 'Stopped.')
     return true
   }
   return false
@@ -430,7 +482,14 @@ async function slashCommand($: EngineInterface, text: string) {
 }
 
 function askCommand($: EngineInterface, cmd: { name: string; args: string }) {
-  pendingCommand = cmd
+  const asked = { ...cmd }
+  pendingCommand = asked
+  $.clock.after(CONFIRM_MS, () => {
+    if (pendingCommand !== asked) return
+    pendingCommand = undefined
+    showSent($, '')
+    void speak($, `Dropped the ${sayName(cmd.name)} command. No answer came.`)
+  })
   showSent($, `/${cmd.name}${cmd.args ? ` ${cmd.args}` : ''} (waiting for your okay)`)
   void speak($, cmd.args ? `Run ${sayName(cmd.name)} with: ${cmd.args}. Okay?` : `What should the ${sayName(cmd.name)} be? Or say "run it" to run it as is.`)
 }
@@ -600,6 +659,20 @@ export const register: Register = on => {
     return { text: 'Voice mode on. Talk any time; pause to send. /talk level 0.05 ignores more background sound. Run /talk again to end it.' }
   })
 
+  on('command.run', { command: 'goal' }, async ($, e, next) => {
+    const result = await next(e)
+    const condition = e.args.trim()
+    if (!condition) return result
+    if (GOAL_OFF.has(condition.toLowerCase())) await update($, goal, () => '')
+    else if (result.text === undefined || result.text.startsWith('Goal set')) await update($, goal, () => condition)
+    return result
+  })
+
+  on('session.append', { door: 'attachment' }, async ($, e, next) => {
+    if (e.agentId === undefined && e.message.name === 'goal_status') isGoalChecked = true
+    return next(e)
+  })
+
   on('prompt.compose', async ($, e, next) => {
     const result = await next(e)
     if (!isActive) return result
@@ -609,6 +682,8 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     turnId = e.turnId
     pendingCommand = undefined
+    isGoalChecked = false
+    if (await read($, loop)) void syncLoops($)
     isWorking = true
     if (isActive) {
       showReply($, '')
@@ -618,6 +693,7 @@ export const register: Register = on => {
   })
 
   on('turn.step', async function* ($, e, next) {
+    if (e.agentId === undefined) isGoalChecked = false
     if (!isActive || e.agentId !== undefined) return yield* next(e)
     const isDue = e.index === 0 || Date.now() - lastSpokenAt >= UPDATE_GAP_MS
     let said = ''
@@ -637,6 +713,13 @@ export const register: Register = on => {
       void setAgent($, e.agentId, row => (isLive(row) ? { ...row, step } : { ...row, step, state: 'running', endedAt: undefined }))
     }
     const result = await next(e)
+    if (e.agentId === undefined && result.deny === undefined && (e.tool === 'CronCreate' || e.tool === 'CronDelete' || e.tool === 'ScheduleWakeup')) {
+      if (e.tool === 'ScheduleWakeup' && !result.isError) {
+        const r = result.result as { scheduledFor?: number; stopped?: boolean }
+        wakeAt = r.stopped ? 0 : (r.scheduledFor ?? 0)
+      }
+      void syncLoops($)
+    }
     if (!isActive || e.agentId !== undefined || pending.length === 0 || result.deny !== undefined) return result
     const text = takePending($)
     showSent($, text)
@@ -658,6 +741,8 @@ export const register: Register = on => {
       return result
     }
     isWorking = false
+    if (isGoalChecked && !e.isAborted) await update($, goal, () => '')
+    isGoalChecked = false
     if (!isActive) return result
     refresh($)
     if (e.isAborted) {
@@ -701,17 +786,21 @@ export const register: Register = on => {
     const spoken = await read($, reply)
     const waiting = await read($, queue)
     const lastSent = await read($, sent)
+    const goalText = await read($, goal)
+    const loopText = await read($, loop)
     const rows = treeOrder(await read($, agents))
       .filter(({ row }) => isLive(row) || Date.now() - (row.endedAt ?? 0) < 60_000)
       .map(({ row, depth }) => ({ ...row, depth }))
     if (e.surface === 'terminal' || e.surface === 'desktop') {
       const { Client } = $.ui.resolve(e)
-      return <Client key="voice" module="./indicator.tsx" width="100%" props={{ phase: current, words: said, reply: spoken, queue: [...waiting], sent: lastSent, agents: rows }} />
+      return <Client key="voice" module="./indicator.tsx" width="100%" props={{ phase: current, words: said, reply: spoken, queue: [...waiting], sent: lastSent, agents: rows, goal: goalText, loop: loopText }} />
     }
     const { Box, Text } = $.ui.resolve(e)
     return (
       <Box flexDirection="column">
         {lastSent ? <Text dimColor>Sent: {lastSent}</Text> : null}
+        {goalText ? <Text color="yellow">Goal: {goalText} · say "clear goal"</Text> : null}
+        {loopText ? <Text color="yellow">Loop: {loopText} · say "stop loop"</Text> : null}
         {spoken ? <Text>{spoken}</Text> : null}
         <Text color="green">Voice: {current}</Text>
         {said ? <Text dimColor>{said}</Text> : null}
