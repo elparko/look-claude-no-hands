@@ -39,15 +39,19 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and tw
 | Interrupt Claude's speech | Start talking. It stops right away. |
 | Remove the last queued item | Say "cancel" or "scratch that" |
 | Empty the queue | Say "clear queue" |
-| Run a slash command | Say "slash" and the command, like "slash compact" or "slash code review high". The words after the name are passed as its arguments. |
+| Run a slash command | Say "slash" and the command anywhere in a sentence, like "slash code review high" or "finish the audit fixes, slash goal". Claude reads it back ("Run goal with: finish the audit fixes. Okay?") and runs it when you say "yes" or "go ahead". Say "no" to drop it. If you said only "slash goal", it asks what the goal should be first. |
 | Message one agent | Say "tell agent 2 to skip the tests" or "ask the reviewer what it found". Agents go by number or by words from their name. |
-| Stop one agent | Say "stop agent 2" or "stop the reviewer" |
+| Stop one agent | Say "stop agent 2", or "stop" and the agent's exact name |
 | Hear what the agents are doing | Say "agent status" |
 | Send the queue right away | Say "send now" or "next". Claude's current step stops and the queue is sent as your next prompt. |
 | Discard what you just said | Say "never mind" |
 | Type instead | Type a prompt. Speech stops; voice mode stays on. |
-| Stop Claude's work | Press Esc, or say "stop". Voice mode stays on. |
+| Stop Claude's work | Press Esc, or say "stop". Voice mode stays on. Anything still queued is dropped, and Claude says so. |
 | Stop voice mode | Type `/talk` again. `/reload-plugins` also turns it off. |
+
+Voice works in one Claude Code session at a time. Running `/talk` in a second session moves the microphone there, and the first session turns voice off with a notice.
+
+If the microphone stops sending sound (headphones unplugged, for example), voice mode turns off with a notice. Run `/talk` again to pick up the current microphone.
 
 Use headphones. With speakers, the microphone hears Claude's voice and can mistake it for you interrupting. If you use speakers, raise `NO_HANDS_BARGE`.
 

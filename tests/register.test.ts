@@ -1,13 +1,14 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-function world(on: On, said: string[], { speakExit = 0, startExit = 0 } = {}) {
+function world(on: On, said: string[], { speakExit = 0, startExit = 0, isMoved = false, isDropping = false } = {}) {
   const clock = mock.clock(on)
   const spoken: string[] = []
   const systemSaid: string[] = []
   const submitted: string[] = []
   const toasts: string[] = []
   const models: string[] = []
+  let quits = 0
   let quit = () => {}
   const ok = (exitCode: number, stdout = '') => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
   on('model.fork', () => ({ value: { isAnswered: true as const, text: 'Deploy finished.', usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }))
@@ -22,7 +23,10 @@ function world(on: On, said: string[], { speakExit = 0, startExit = 0 } = {}) {
       if (speakExit === 0) spoken.push(e.init?.stdin ?? '')
       return ok(speakExit, 'done')
     }
-    if (url.endsWith('/quit')) quit()
+    if (url.endsWith('/quit')) {
+      quits++
+      quit()
+    }
     if (url.endsWith('/model')) models.push(e.init?.stdin ?? '')
     return ok(0, 'ok')
   })
@@ -35,6 +39,10 @@ function world(on: On, said: string[], { speakExit = 0, startExit = 0 } = {}) {
       yield line({ partial: text.split(' ')[0] })
       yield line({ final: text })
     }
+    if (isMoved) {
+      yield line({ moved: true })
+      return { value: { code: 0, signal: null } }
+    }
     await quitting
     return { value: { code: 0, signal: null } }
   })
@@ -46,9 +54,9 @@ function world(on: On, said: string[], { speakExit = 0, startExit = 0 } = {}) {
   })
   on('prompt.submit', (_$, e) => {
     submitted.push(e.text)
-    return { text: e.text }
+    return isDropping ? { drop: 'blocked' } : { text: e.text }
   })
-  return { clock, spoken, systemSaid, submitted, toasts, models }
+  return { clock, spoken, systemSaid, submitted, toasts, models, quits: () => quits }
 }
 
 const talk = { command: 'talk', args: '', origin: { kind: 'composer' as const }, presentation: { isFullscreen: false, columns: 120 } }
@@ -269,8 +277,9 @@ test('a session start while voice mode is on does not start a second listener', 
   await $.command.run(talk)
 })
 
-function spawnable(on: On) {
-  on('agent.spawn', () => ({ model: 'm', agentId: 'a1' }))
+function spawnable(on: On, extra: { teammateId?: string } = {}) {
+  let n = 0
+  on('agent.spawn', () => ({ model: 'm', agentId: `a${++n}`, ...extra }))
 }
 
 async function spawnReviewer($: { agent: { spawn: (input: never) => Promise<unknown> } }) {
@@ -324,41 +333,167 @@ test('"stop agent one" stops that agent', { timeoutMs: 20_000 }, async ($, on) =
   await spawnReviewer($)
   await $.command.run(talk)
   await w.clock.advance(0)
-  expect(stopped).toEqual(['a1'])
+  expect(stopped).toEqual(['reviewer'])
   expect(w.spoken).toContain('Stopped agent 1, reviewer.')
   await $.command.run(talk)
 })
 
-test('"stop" alone still stops the main work, not an agent', { timeoutMs: 20_000 }, async ($, on) => {
+test('"stop" alone stops the main work, not an agent', { timeoutMs: 20_000 }, async ($, on) => {
+  const stopped: string[] = []
+  const aborted: string[] = []
+  on('tool.call', (_$, e) => {
+    if (e.tool === 'TaskStop') stopped.push('x')
+    return { result: {}, text: 'ok' } as never
+  })
+  on('turn.abort', (_$, e) => {
+    aborted.push(e.turnId)
+    return { value: undefined }
+  })
+  spawnable(on)
+  const w = world(on, ['Stop.'])
+  await spawnReviewer($)
+  await $.turn.start({ text: 'run the tests', turnId: 't1' } as never)
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(stopped).toEqual([])
+  expect(aborted).toEqual(['t1'])
+  expect(w.spoken).toContain('Stopped.')
+  await $.command.run(talk)
+})
+
+test('"stop" with words from an agent\'s task does not stop that agent', { timeoutMs: 20_000 }, async ($, on) => {
   const stopped: string[] = []
   on('tool.call', (_$, e) => {
     if (e.tool === 'TaskStop') stopped.push('x')
     return { result: {}, text: 'ok' } as never
   })
   spawnable(on)
-  const w = world(on, ['Stop.'])
-  await spawnReviewer($)
+  const w = world(on, ['Kill the server.'])
+  await $.agent.spawn({ prompt: 'Restart it.', description: 'restart the dev server' } as never)
   await $.command.run(talk)
   await w.clock.advance(0)
   expect(stopped).toEqual([])
+  expect(w.submitted).toEqual(['Kill the server.'])
   await $.command.run(talk)
 })
 
-test('"slash compact" runs the slash command', { timeoutMs: 20_000 }, async ($, on) => {
+test('agent numbers as Whisper spells them reach the right agent', { timeoutMs: 20_000 }, async ($, on) => {
+  const stopped: string[] = []
+  on('tool.call', (_$, e) => {
+    if (e.tool === 'TaskStop') stopped.push(String((e as { task_id?: string }).task_id))
+    return { result: {}, text: 'ok' } as never
+  })
+  spawnable(on)
+  const w = world(on, ['Stop agent to.', 'Stop agent number won.'])
+  await spawnReviewer($)
+  await spawnReviewer($)
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(stopped).toEqual(['reviewer', 'reviewer'])
+  expect(w.spoken).toContain('Stopped agent 2, reviewer.')
+  expect(w.spoken).toContain('Stopped agent 1, reviewer.')
+  await $.command.run(talk)
+})
+
+test('a teammate goes idle after a turn instead of done', { timeoutMs: 20_000 }, async ($, on) => {
+  spawnable(on, { teammateId: 'scout@team' })
+  const w = world(on, ['Agent status.'])
+  await $.agent.spawn({ prompt: 'Scout.', description: 'scout the tests', name: 'scout' } as never)
+  await $.turn.complete({ ...turn, agentId: 'a1' })
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.spoken.some(line => line.startsWith('1 running.'))).toBe(true)
+  await $.command.run(talk)
+})
+
+test('agents that finish while Claude works are announced together', { timeoutMs: 20_000 }, async ($, on) => {
+  spawnable(on)
+  const w = world(on, [])
+  await spawnReviewer($)
+  await spawnReviewer($)
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  await $.turn.start({ text: 'review', turnId: 't1' } as never)
+  await $.turn.complete({ ...turn, agentId: 'a1' })
+  await $.turn.complete({ ...turn, agentId: 'a2' })
+  await w.clock.advance(5000)
+  expect(w.spoken).toContain('2 agents ended: agents 1, 2.')
+  await $.command.run(talk)
+})
+
+test('an agent stopped by voice is not announced again as failed', { timeoutMs: 20_000 }, async ($, on) => {
+  on('tool.call', () => ({ result: {}, text: 'ok' }) as never)
+  spawnable(on)
+  const w = world(on, ['Stop agent one.'])
+  await spawnReviewer($)
+  await $.turn.start({ text: 'review', turnId: 't1' } as never)
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  await $.turn.complete({ ...turn, agentId: 'a1', isAborted: true, reason: 'aborted' as never })
+  await w.clock.advance(5000)
+  expect(w.spoken).toContain('Stopped agent 1, reviewer.')
+  expect(w.spoken.filter(line => line.includes('agent 1, reviewer')).length).toBe(1)
+  await $.command.run(talk)
+})
+
+test('a spoken slash command is read back and runs after an okay', { timeoutMs: 20_000 }, async ($, on) => {
   const ran: string[] = []
-  on('command.list', () => ({ value: [{ name: 'compact', description: '', source: 'builtin' }, { name: 'code-review', description: '', source: 'builtin' }] }) as never)
+  on('command.list', () => ({ value: [{ name: 'compact', description: '', source: 'builtin' }, { name: 'code-review', description: '', source: 'builtin' }, { name: 'goal', description: '', source: 'builtin' }] }) as never)
   on('command.run', (_$, e) => {
     ran.push(`${e.command}|${e.args}`)
     return { text: 'ok' }
   })
-  const w = world(on, ['Slash compact.', 'Slash code review high.', 'Slash nothing here.'])
+  const w = world(on, ['Slash code review high.', 'Yes.', 'Okay, slash goal.', 'Finish the audit fixes.', 'Go ahead.', 'Finish the tests, slash goal.', 'No.', 'Slash the budget in half.'])
   await $.command.run(talk)
   await w.clock.advance(0)
-  expect(ran).toContain('compact|')
-  expect(ran).toContain('code-review|high')
-  expect(w.submitted).toEqual([])
-  expect(w.spoken).toContain('There is no command called nothing here.')
+  expect(ran).toEqual(['code-review|high', 'goal|Finish the audit fixes'])
+  expect(w.spoken).toContain('Run code review with: high. Okay?')
+  expect(w.spoken).toContain('What should the goal be? Or say "run it" to run it as is.')
+  expect(w.spoken).toContain('Run goal with: finish the tests. Okay?')
+  expect(w.spoken).toContain('Dropped.')
+  expect(w.submitted).toEqual(['Slash the budget in half.'])
   await $.command.run(talk)
+})
+
+test('words queued before "stop" are dropped, not sent with a later turn', { timeoutMs: 20_000 }, async ($, on) => {
+  on('turn.abort', () => ({ value: undefined }))
+  const w = world(on, ['also check the logs', 'Stop.'])
+  await $.command.run(talk)
+  await $.turn.start({ text: 'run the tests', turnId: 't1' } as never)
+  await w.clock.advance(0)
+  await $.turn.complete({ ...turn, isAborted: true, reason: 'aborted' as never })
+  await w.clock.advance(0)
+  expect(w.spoken).toContain('Dropped the queued message.')
+  await $.turn.start({ text: 'what time is it', turnId: 't2' } as never)
+  await $.turn.complete({ ...turn, answer: 'It is noon.', turnId: 't2' })
+  await w.clock.advance(0)
+  expect(w.submitted).toEqual([])
+  expect(w.spoken).toContain('It is noon.')
+  await $.command.run(talk)
+})
+
+test('a prompt another hook blocks does not leave voice stuck working', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, ['run the tests', 'and check the logs'], { isDropping: true })
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.submitted).toEqual(['run the tests', 'and check the logs'])
+  await $.command.run(talk)
+})
+
+test('"next" while Claude is idle is sent as a prompt', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, ['Next.'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.submitted).toEqual(['Next.'])
+  await $.command.run(talk)
+})
+
+test('another session taking the mic turns voice off here without stopping the server', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [], { isMoved: true })
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.toasts[0]).toContain('another Claude Code session')
+  expect(w.quits()).toBe(0)
 })
 
 test('"clear cue" empties the queue', { timeoutMs: 20_000 }, async ($, on) => {

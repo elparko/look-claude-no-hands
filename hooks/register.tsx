@@ -51,11 +51,15 @@ const AGENT_STATUS = /^\W*(agent status|status|what are (the )?agents doing|how 
 const AGENT_TELL = /^\W*(?:tell|ask|message)\s+(.+?)(?:\s+to\s+|\s+that\s+|,\s*|:\s*|\s+(?=(?:what|whether|if|how|why|when|where|which)\b))(.+)$/i
 const AGENT_STOP = /^\W*(?:stop|kill|cancel)\s+(.+?)\W*$/i
 const FINISH_GAP_MS = 4_000
-const SLASH = /^[\s"']*(?:slash\s+|\/)(.+?)[.!?\s]*$/i
+const SLASH = /(?:\bslash\s+|(?:^|\s)\/(?=\w))(.+)$/i
+const FILLER = /^\W*(?:(?:okay|ok|so|alright|um|uh|and|then)\b\W*)+/i
+const YES = /^\W*(yes|yeah|yep|yup|sure|ok(ay)?|go( ahead)?|do it|start( it)?|run it|(we('re)? )?good|sounds good|correct|right)\W*$/i
+const NO = /^\W*(no|nope|cancel( it)?|drop it|don'?t|never ?mind)\W*$/i
 
 const NUMBERS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
+const SOUNDS_LIKE: Record<string, number> = { won: 1, to: 2, too: 2, tree: 3, for: 4, fore: 4, ate: 8 }
 
-type Heard = { ready?: boolean; start?: boolean; partial?: string; final?: string; error?: string }
+type Heard = { ready?: boolean; start?: boolean; partial?: string; final?: string; error?: string; moved?: boolean }
 
 let isActive = false
 let isHearing = false
@@ -70,6 +74,7 @@ let turnId: string | undefined
 let micLevel: string | undefined
 let voiceName: string | undefined
 let whisperModel: string | undefined
+let pendingCommand: { name: string; args: string } | undefined
 let finished: AgentRow[] = []
 let isFinishDue = false
 
@@ -135,8 +140,7 @@ function takePending($: EngineInterface) {
   return text
 }
 
-function speak($: EngineInterface, text: string) {
-  const id = speechId
+function speak($: EngineInterface, text: string, id = speechId) {
   lastSpokenAt = Date.now()
   speech = speech.then(async () => {
     if (!text || id !== speechId || !isActive) return
@@ -156,13 +160,14 @@ function silence($: EngineInterface) {
   void call($, '/stop')
 }
 
-function turnOff($: EngineInterface, why?: string) {
+function turnOff($: EngineInterface, why?: string, isQuitting = true) {
   isActive = false
   isHearing = false
+  pendingCommand = undefined
   sessionId++
   speechId++
   takePending($)
-  void call($, '/quit')
+  if (isQuitting) void call($, '/quit')
   refresh($)
   hear($, '')
   showReply($, '')
@@ -178,7 +183,15 @@ function submit($: EngineInterface, text: string) {
   showSent($, text)
   isWorking = true
   refresh($)
-  void $.prompt.submit({ text, asUser: true })
+  void $.prompt.submit({ text, asUser: true }).then(
+    r => r.drop !== undefined && notWorking($),
+    () => notWorking($),
+  )
+}
+
+function notWorking($: EngineInterface) {
+  isWorking = false
+  refresh($)
 }
 
 function showQueue($: EngineInterface) {
@@ -192,7 +205,7 @@ async function stopWork($: EngineInterface) {
 
 async function control($: EngineInterface, text: string) {
   if (CANCEL.test(text)) {
-    if (pending.length === 0) return true
+    if (pending.length === 0) return false
     pending.pop()
     showQueue($)
     void speak($, 'Removed.')
@@ -205,7 +218,7 @@ async function control($: EngineInterface, text: string) {
     return true
   }
   if (SEND_NOW.test(text)) {
-    if (pending.length === 0) return true
+    if (pending.length === 0) return false
     await stopWork($)
     submit($, takePending($))
     return true
@@ -225,6 +238,7 @@ async function aside($: EngineInterface, question: string) {
   hear($, '')
   const answer = r?.isAnswered ? r.text.trim() : ''
   if (!answer || /^QUEUE\W*$/.test(answer)) {
+    if (!isWorking) return submit($, question)
     pending.push(question)
     showQueue($)
     return
@@ -234,11 +248,13 @@ async function aside($: EngineInterface, question: string) {
 
 async function onHeard($: EngineInterface, text: string) {
   hear($, '')
-  if (!/[a-z0-9]/i.test(text) || DISCARD.test(text)) return
+  if (!/[a-z0-9]/i.test(text)) return
+  if (pendingCommand) return confirmCommand($, text)
+  if (DISCARD.test(text)) return
   if (await control($, text)) return
   if (await slashCommand($, text)) return
   if (await agentControl($, text)) return
-  if (isWorking && ASIDE.test(text)) return aside($, text)
+  if (isWorking && ASIDE.test(text)) return void aside($, text)
   if (isWorking) {
     pending.push(text)
     showQueue($)
@@ -274,6 +290,7 @@ async function converse($: EngineInterface) {
           await onHeard($, msg.final.trim())
         }
         if (msg.error) why = `Voice mode off: ${msg.error}`
+        if (msg.moved) return turnOff($, 'Voice mode off here: another Claude Code session turned it on.', false)
       }
     }
   } catch {}
@@ -301,16 +318,17 @@ async function respond($: EngineInterface, answer: string) {
     submit($, takePending($))
     return
   }
+  const id = speechId
   let spoken = answer.trim()
   if (!isSpeakable(spoken)) {
     isPreparing = true
     refresh($)
-    const forked = await $.model.fork({ prompt: SPOKEN_PROMPT }).catch(() => undefined)
+    const forked = await $.model.fork({ prompt: `${SPOKEN_PROMPT}\n\nYour written answer, which I can also see on screen:\n${answer}` }).catch(() => undefined)
     isPreparing = false
     refresh($)
     spoken = forked?.isAnswered ? forked.text.trim() : plain(answer) || 'Done.'
   }
-  if (isActive && !isWorking) await speak($, spoken.slice(0, 4000))
+  if (isActive && !isWorking) await speak($, spoken.slice(0, 4000), id)
 }
 
 function setAgent($: EngineInterface, id: string, fn: (row: AgentRow) => AgentRow) {
@@ -333,13 +351,14 @@ function words2(text: string) {
   return text.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w && !['the', 'a', 'an', 'agent', 'number'].includes(w))
 }
 
-function findAgent(list: AgentRow[], spoken: string) {
-  const target = spoken.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').trim()
-  const num = target.match(/^(?:agent|number)\s+(\w+)$/)?.[1]
+function findAgent(list: AgentRow[], spoken: string, isStrict = false) {
+  const target = spoken.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+  const num = target.match(/^(?:the )?(?:agent|number)(?: number)? (\w+)$/)?.[1]
   if (num !== undefined) {
-    const n = /^\d+$/.test(num) ? Number(num) : NUMBERS.indexOf(num)
+    const n = /^\d+$/.test(num) ? Number(num) : (SOUNDS_LIKE[num] ?? NUMBERS.indexOf(num))
     return list.find(row => row.num === n)
   }
+  if (isStrict) return list.find(row => words2(row.label).join(' ') === words2(target).join(' '))
   const want = words2(target)
   if (want.length === 0) return undefined
   const scored = list
@@ -383,27 +402,52 @@ function treeOrder(list: AgentRow[]) {
   return out
 }
 
+function wordsOf(text: string) {
+  return text.toLowerCase().replace(/[^a-z0-9' ]/g, ' ').split(/\s+/).filter(Boolean)
+}
+
+function sayName(name: string) {
+  return name.replace(/[^a-z0-9]+/gi, ' ').trim()
+}
+
 async function slashCommand($: EngineInterface, text: string) {
-  const said = text.match(SLASH)?.[1]
-  if (said === undefined) return false
-  const spoken = said.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean)
+  const match = text.match(SLASH)
+  if (!match) return false
+  const spoken = wordsOf(match[1]!)
   const commands = await $.command.list().catch(() => [])
-  let best: { name: string; size: number } | undefined
+  let best: { name: string; parts: string[] } | undefined
   for (const { name } of commands) {
     const parts = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
     const isPrefix = parts.length <= spoken.length && parts.every((w, i) => w === spoken[i])
-    if (isPrefix && parts.length > (best?.size ?? 0)) best = { name, size: parts.length }
+    if (isPrefix && parts.length > (best?.parts.length ?? 0)) best = { name, parts }
   }
-  if (!best) {
-    void speak($, `There is no command called ${spoken.join(' ')}.`)
-    return true
-  }
-  const args = said.split(/\s+/).slice(best.size).join(' ')
-  showSent($, `/${best.name}${args ? ` ${args}` : ''}`)
-  void speak($, `Running ${best.name.replace(/[^a-z0-9]+/gi, ' ')}.`)
-  const name = best.name
-  void $.command.run({ command: name, args }).catch(() => speak($, `${name} did not run.`))
+  if (!best) return false
+  const again = new RegExp(`\\bslash ${best.parts.join(' ')}\\b`, 'g')
+  const after = spoken.slice(best.parts.length).join(' ').replace(again, '').replace(/\s+/g, ' ').trim()
+  const before = wordsOf(text.slice(0, match.index).replace(FILLER, '')).join(' ')
+  askCommand($, { name: best.name, args: after || before })
   return true
+}
+
+function askCommand($: EngineInterface, cmd: { name: string; args: string }) {
+  pendingCommand = cmd
+  showSent($, `/${cmd.name}${cmd.args ? ` ${cmd.args}` : ''} (waiting for your okay)`)
+  void speak($, cmd.args ? `Run ${sayName(cmd.name)} with: ${cmd.args}. Okay?` : `What should the ${sayName(cmd.name)} be? Or say "run it" to run it as is.`)
+}
+
+function confirmCommand($: EngineInterface, text: string) {
+  const cmd = pendingCommand!
+  if (NO.test(text)) {
+    pendingCommand = undefined
+    showSent($, '')
+    void speak($, 'Dropped.')
+    return
+  }
+  if (!YES.test(text)) return askCommand($, { ...cmd, args: text.replace(/[.!?\s]+$/, '') })
+  pendingCommand = undefined
+  showSent($, `/${cmd.name}${cmd.args ? ` ${cmd.args}` : ''}`)
+  void speak($, `Running ${sayName(cmd.name)}.`)
+  void $.command.run({ command: cmd.name, args: cmd.args }).catch(() => speak($, `${sayName(cmd.name)} did not run.`))
 }
 
 async function agentControl($: EngineInterface, text: string) {
@@ -414,7 +458,7 @@ async function agentControl($: EngineInterface, text: string) {
   }
   if (list.length === 0) return false
   const tell = text.match(AGENT_TELL)
-  const toldAgent = tell ? findAgent(list.filter(isLive), tell[1]!) : undefined
+  const toldAgent = tell ? findAgent(list, tell[1]!) : undefined
   if (tell && toldAgent) {
     showSent($, `(to ${nameOf(toldAgent)}) ${tell[2]}`)
     const r = await $.session
@@ -424,9 +468,9 @@ async function agentControl($: EngineInterface, text: string) {
     return true
   }
   const stop = text.match(AGENT_STOP)
-  const stopAgent = stop ? findAgent(list.filter(isLive), stop[1]!) : undefined
+  const stopAgent = stop ? findAgent(list.filter(isLive), stop[1]!, true) : undefined
   if (stopAgent) {
-    const r = await $.tool.call({ tool: 'TaskStop', task_id: stopAgent.id }).catch(() => undefined)
+    const r = await $.tool.call({ tool: 'TaskStop', task_id: stopAgent.stopAs ?? stopAgent.id }).catch(() => undefined)
     const isStopped = r !== undefined && r.deny === undefined && !r.isError
     if (isStopped) await setAgent($, stopAgent.id, row => ({ ...row, state: 'stopped', endedAt: Date.now() }))
     void speak($, isStopped ? `Stopped ${nameOf(stopAgent)}.` : `Could not stop ${nameOf(stopAgent)}.`)
@@ -445,11 +489,12 @@ function announceFinished($: EngineInterface, row: AgentRow) {
     const batch = finished
     finished = []
     if (!isActive || batch.length === 0) return
-    const failed = batch.filter(row => row.state !== 'done')
+    const failed = batch.filter(row => row.state === 'failed')
+    const one = batch[0]!
     const line =
       batch.length === 1
-        ? `${nameOf(batch[0]!)} ${failed.length ? 'failed' : 'finished'}.`
-        : `${batch.length} agents finished${failed.length ? `, ${failed.length} of them failed` : ''}: agents ${batch.map(row => row.num).join(', ')}.`
+        ? `${nameOf(one)} ${one.state === 'done' ? 'finished' : one.state}.`
+        : `${batch.length} agents ended${failed.length ? `, ${failed.length} of them failed` : ''}: agents ${batch.map(row => row.num).join(', ')}.`
     void speak($, line)
   })
 }
@@ -463,9 +508,9 @@ async function syncAgents($: EngineInterface) {
     const known = new Set(list.map(row => row.id))
     const next = list.map(row => {
       const info = byId.get(row.id)
-      if (!info || !isLive(row)) return row
-      const state = toState[info.status] ?? row.state
-      return state === row.state ? row : { ...row, state, ...(isLive({ ...row, state }) ? {} : { endedAt: Date.now() }) }
+      const state = info ? (toState[info.status] ?? row.state) : row.state
+      if (state === row.state) return row
+      return isLive({ ...row, state }) ? { ...row, state, endedAt: undefined } : { ...row, state, endedAt: Date.now() }
     })
     let num = Math.max(0, ...list.map(row => row.num))
     for (const info of live) {
@@ -476,6 +521,8 @@ async function syncAgents($: EngineInterface) {
         label: info.name ?? info.description,
         type: info.type,
         parentId: info.parentId,
+        stopAs: info.teammateId ?? info.name,
+        isTeammate: info.teammateId !== undefined,
         state: toState[info.status] ?? 'running',
         step: '',
         startedAt: Date.now(),
@@ -496,6 +543,10 @@ export const register: Register = on => {
       name: 'talk',
       description: 'Hands-free voice mode: talk to Claude and hear its replies. Run again to stop.',
     })
+    if (!isActive && (await read($, phase)) !== null) {
+      void call($, '/quit')
+      $.ui.toast('Voice mode turned off by the reload. Run /talk to turn it back on.')
+    }
     if (!isActive) {
       void update($, phase, () => null)
       hear($, '')
@@ -521,7 +572,8 @@ export const register: Register = on => {
       if (!value || !/^[ab][fm]_[a-z]+$/.test(value)) return { text: `Usage: /talk voice am_michael. ${VOICES}` }
       voiceName = value
       if (isActive) {
-        await call($, '/voice', value)
+        const r = await call($, '/voice', value)
+        if (r?.startsWith('failed')) return { text: `Voice not changed: ${r.replace(/^failed:\s*/, '')}` }
         void speak($, 'This is how I sound now.')
       }
       return { text: `Voice set to ${value}.` }
@@ -543,7 +595,6 @@ export const register: Register = on => {
       return { text: 'Voice mode off.' }
     }
     isActive = true
-    isWorking = false
     const id = ++sessionId
     $.clock.after(0, () => void start($, id))
     return { text: 'Voice mode on. Talk any time; pause to send. /talk level 0.05 ignores more background sound. Run /talk again to end it.' }
@@ -557,8 +608,8 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     turnId = e.turnId
+    isWorking = true
     if (isActive) {
-      isWorking = true
       showReply($, '')
       refresh($)
     }
@@ -580,7 +631,10 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
-    if (e.agentId !== undefined) void setAgent($, e.agentId, row => ({ ...row, step: brief(e as unknown as Record<string, unknown>) }))
+    if (e.agentId !== undefined) {
+      const step = brief(e as unknown as Record<string, unknown>)
+      void setAgent($, e.agentId, row => (isLive(row) ? { ...row, step } : { ...row, step, state: 'running', endedAt: undefined }))
+    }
     const result = await next(e)
     if (!isActive || e.agentId !== undefined || pending.length === 0 || result.deny !== undefined) return result
     const text = takePending($)
@@ -592,19 +646,24 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     if (e.agentId !== undefined) {
-      const state: AgentState = e.isAborted ? 'stopped' : e.reason === 'answer' ? 'done' : 'failed'
       const id = e.agentId
-      await setAgent($, id, row => ({ ...row, state, endedAt: Date.now() }))
+      const before = (await read($, agents)).find(r => r.id === id)
+      const ended: AgentState = e.isAborted ? 'stopped' : e.reason === 'answer' ? 'done' : 'failed'
+      const state: AgentState = before?.isTeammate && ended === 'done' ? 'idle' : ended
+      await setAgent($, id, row => (isLive({ ...row, state }) ? { ...row, state } : { ...row, state, endedAt: Date.now() }))
       await syncAgents($)
       const row = (await read($, agents)).find(r => r.id === id)
-      if (row && !isLive(row)) announceFinished($, row)
+      if (row && !isLive(row) && before?.state !== 'stopped') announceFinished($, row)
       return result
     }
-    if (!isActive) return result
     isWorking = false
+    if (!isActive) return result
     refresh($)
     if (e.isAborted) {
       silence($)
+      const dropped = pending.length
+      takePending($)
+      if (dropped > 0) void speak($, `Dropped ${dropped === 1 ? 'the queued message' : `${dropped} queued messages`}.`)
       return result
     }
     const answer = e.reason === 'answer' ? e.answer : ''
@@ -624,6 +683,8 @@ export const register: Register = on => {
         label: e.name ?? e.description,
         type: e.subagentType,
         parentId: e.parentAgentId,
+        stopAs: result.teammateId ?? e.name,
+        isTeammate: e.isTeammate === true || result.teammateId !== undefined,
         state: 'running' as const,
         step: 'starting',
         startedAt: Date.now(),
@@ -663,13 +724,16 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    if (isActive && e.origin.kind === 'composer') {
+    const isTyped = isActive && e.origin.kind === 'composer'
+    if (isTyped) {
       showSent($, e.text)
       silence($)
       isWorking = true
       refresh($)
     }
-    return next(e)
+    const result = await next(e)
+    if (isTyped && result.drop !== undefined) notWorking($)
+    return result
   })
 
   on('session.end', async ($, e, next) => {

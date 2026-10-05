@@ -8,6 +8,8 @@ export type AgentRow = {
   label: string
   type: string
   parentId?: string
+  stopAs?: string
+  isTeammate?: boolean
   state: AgentState
   step: string
   startedAt: number
