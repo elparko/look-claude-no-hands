@@ -3,3 +3,4 @@
 tsconfig.json
 .voiced.sock
 __pycache__/
+.voiced.sock.lock

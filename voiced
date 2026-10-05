@@ -7,14 +7,15 @@ up() { curl -s -m 2 --unix-socket $sock http://voice/health >/dev/null }
 
 if up; then
   [[ $here/voiced.py -nt $sock ]] || exit 0
+  [[ $(curl -s -m 2 --unix-socket $sock http://voice/health) == "ok listening" ]] && exit 0
   curl -s -m 2 --unix-socket $sock -X POST http://voice/quit >/dev/null
   sleep 1
 fi
-nohup uv run --quiet --script $here/voiced.py $sock >$log 2>&1 &
+nohup uv run --quiet --script $here/voiced.py $sock >>$log 2>&1 &
 server=$!
 for i in {1..600}; do
   up && exit 0
-  kill -0 $server 2>/dev/null || { tail -3 $log; exit 1 }
+  kill -0 $server 2>/dev/null || { up && exit 0; tail -3 $log; exit 1 }
   sleep 1
 done
 exit 1

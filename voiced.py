@@ -10,6 +10,7 @@
 # ]
 # ///
 import collections
+import fcntl
 import json
 import os
 import queue
@@ -55,13 +56,16 @@ MIN_SPEECH = 0.4
 NOISE = {"thank you", "thanks", "thank you so much", "thanks for watching", "thank you for watching", "you", "bye", "okay", "uh", "um", "hmm"}
 
 IDLE_LIMIT = 15 * 60
+STALL = 2.0
 
 jobs: queue.Queue = queue.Queue()
-stop = threading.Event()
+stops = [0]
+speaking = threading.Lock()
 barge = threading.Event()
 playing = threading.Event()
 user_talking = threading.Event()
 listener = [0]
+listening = [0]
 last_used = [time.monotonic()]
 busy = [0]
 
@@ -120,39 +124,58 @@ def synthesize(text: str):
     return [np.array(s.audio, dtype=np.float32) for s in segments]
 
 
-def speak(text: str) -> str:
-    deadline = time.monotonic() + 60
-    while user_talking.is_set() and time.monotonic() < deadline:
-        time.sleep(0.05)
-    stop.clear()
-    barge.clear()
-    if USE_SAY:
-        return speak_with_say(" ".join(text.split()))
-    clips = on_model_thread(synthesize, " ".join(text.split()))
-    if user_talking.is_set() or stop.is_set():
-        return "interrupted"
-    playing.set()
+def refresh_devices():
+    sd.stop()
     try:
-        for clip in clips:
-            sd.play(clip, tts.sample_rate)
-            while sd.get_stream().active:
-                if stop.is_set() or barge.is_set():
-                    sd.stop()
-                    return "interrupted"
-                time.sleep(0.03)
-    finally:
-        playing.clear()
+        sd._terminate()
+        sd._initialize()
+    except AttributeError:
+        pass
+
+
+def speak(text: str) -> str:
+    asked = stops[0]
+    deadline = time.monotonic() + 60
+    while user_talking.is_set() and stops[0] == asked and time.monotonic() < deadline:
+        time.sleep(0.05)
+    with speaking:
+        barge.clear()
+        if USE_SAY:
+            return speak_with_say(" ".join(text.split()), asked)
+        clips = on_model_thread(synthesize, " ".join(text.split()))
+        if user_talking.is_set() or stops[0] != asked:
+            return "interrupted"
+        playing.set()
+        try:
+            for clip in clips:
+                try:
+                    sd.play(clip, tts.sample_rate)
+                except sd.PortAudioError:
+                    if not listening[0]:
+                        refresh_devices()
+                    sd.play(clip, tts.sample_rate)
+                end = time.monotonic() + len(clip) / tts.sample_rate + 1
+                while sd.get_stream().active:
+                    if stops[0] != asked or barge.is_set():
+                        sd.stop()
+                        return "interrupted"
+                    if time.monotonic() > end:
+                        sd.stop()
+                        break
+                    time.sleep(0.03)
+        finally:
+            playing.clear()
     return "done"
 
 
-def speak_with_say(text: str) -> str:
-    if user_talking.is_set() or stop.is_set():
+def speak_with_say(text: str, asked: int) -> str:
+    if user_talking.is_set() or stops[0] != asked:
         return "interrupted"
     playing.set()
     say = subprocess.Popen(["say", "-r", str(round(185 * SPEED)), text])
     try:
         while say.poll() is None:
-            if stop.is_set() or barge.is_set():
+            if stops[0] != asked or barge.is_set():
                 say.terminate()
                 return "interrupted"
             time.sleep(0.03)
@@ -164,8 +187,10 @@ def speak_with_say(text: str) -> str:
 def listen(send):
     listener[0] += 1
     me = listener[0]
+    user_talking.clear()
     blocks: queue.Queue = queue.Queue()
     size = int(RATE * BLOCK)
+    last_block = [time.monotonic()]
 
     def on_audio(data, frames, when, status):
         blocks.put(data[:, 0].copy())
@@ -195,7 +220,10 @@ def listen(send):
 
         while True:
             if listener[0] != me:
-                raise ConnectionError("replaced by a newer listener")
+                is_finishing.set()
+                if partial[0] is not None:
+                    partial[0].result()
+                return False
             try:
                 block = blocks.get(timeout=0.5)
             except queue.Empty:
@@ -205,7 +233,10 @@ def listen(send):
                 last_beat = now
                 send({"beat": True})
             if block is None:
+                if now - last_block[0] >= STALL:
+                    raise RuntimeError("the microphone stopped sending audio (was it unplugged?)")
                 continue
+            last_block[0] = now
             peak = float(np.abs(block).max())
             is_loud = peak > (level["barge"] if playing.is_set() else level["speech"])
             if not heard:
@@ -236,15 +267,26 @@ def listen(send):
         if text:
             subprocess.Popen(["afplay", SENT_SOUND])
         send({"final": text})
-        user_talking.clear()
-
-    with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=size, callback=on_audio):
-        send({"ready": True})
-        try:
-            while True:
-                utterance()
-        except ConnectionError:
+        if listener[0] == me:
             user_talking.clear()
+        return True
+
+    if not listening[0] and not playing.is_set():
+        refresh_devices()
+    with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=size, callback=on_audio):
+        listening[0] += 1
+        try:
+            send({"ready": True})
+            last_block[0] = time.monotonic()
+            while utterance():
+                pass
+            send({"moved": True})
+        except ConnectionError:
+            pass
+        finally:
+            listening[0] -= 1
+            if listener[0] == me:
+                user_talking.clear()
 
 
 def quit_when_idle():
@@ -277,7 +319,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path != "/listen":
-            return self.reply("ok")
+            return self.reply("ok listening" if listening[0] else "ok idle")
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
         self.end_headers()
@@ -305,7 +347,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/speak":
             return self.reply(speak(body))
         if self.path == "/voice":
-            voice["name"] = body.strip()
+            name = body.strip()
+            if not name:
+                return self.reply("failed: no voice name")
+            if not USE_SAY:
+                try:
+                    on_model_thread(lambda: list(tts.generate(text="Hi.", voice=name, lang_code=name[0])))
+                except Exception as e:
+                    return self.reply(f"failed: {e}")
+            voice["name"] = name
             return self.reply("ok")
         if self.path == "/model":
             model = WHISPERS.get(body.strip(), body.strip())
@@ -315,11 +365,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(f"failed: {e}")
             return self.reply("ok")
         if self.path == "/level":
-            level["speech"] = float(body)
+            try:
+                value = float(body)
+            except ValueError:
+                return self.reply(f"failed: {body.strip()!r} is not a number")
+            if not 0 < value < 1:
+                return self.reply(f"failed: {value} is not between 0 and 1")
+            level["speech"] = value
             level["barge"] = level["speech"] * 2
             return self.reply("ok")
         if self.path == "/stop":
-            stop.set()
+            stops[0] += 1
             return self.reply("ok")
         if self.path == "/quit":
             self.reply("ok")
@@ -335,17 +391,34 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         return conn, ("voice", 0)
 
 
+def reachable(path: str) -> bool:
+    probe = socket.socket(socket.AF_UNIX)
+    try:
+        probe.connect(path)
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
 def main():
     path = sys.argv[1]
-    if os.path.exists(path):
+    lock = open(f"{path}.lock", "w")
+    while True:
         try:
-            probe = socket.socket(socket.AF_UNIX)
-            probe.connect(path)
-            probe.close()
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if reachable(path):
+                print("busy", flush=True)
+                sys.exit(3)
+            time.sleep(0.5)
+    if os.path.exists(path):
+        if reachable(path):
             print("busy", flush=True)
             sys.exit(3)
-        except OSError:
-            os.unlink(path)
+        os.unlink(path)
     ready = threading.Event()
     threading.Thread(target=model_thread, args=(ready,), daemon=True).start()
     ready.wait()
