@@ -255,3 +255,14 @@ test('the panel shows the last thing sent to Claude', { timeoutMs: 20_000 }, asy
   await ui.unmount()
   await $.command.run(talk)
 })
+
+test('a session start while voice mode is on does not start a second listener', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [])
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true } as never)
+  await w.clock.advance(0)
+  expect(w.spoken).toEqual(["I'm listening."])
+  await $.command.run(talk)
+})

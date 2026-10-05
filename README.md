@@ -42,7 +42,7 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and th
 | Discard what you just said | Say "never mind" |
 | Type instead | Type a prompt. Speech stops; voice mode stays on. |
 | Stop Claude's work | Press Esc, or say "stop". Voice mode stays on. |
-| Stop voice mode | Type `/talk` again |
+| Stop voice mode | Type `/talk` again. Voice mode stays on across `/reload-plugins`. |
 
 Use headphones. With speakers, the microphone hears Claude's voice and can mistake it for you interrupting. If you use speakers, raise `NO_HANDS_BARGE`.
 

@@ -302,6 +302,14 @@ export const register: Register = on => {
       name: 'talk',
       description: 'Hands-free voice mode: talk to Claude and hear its replies. Run again to stop.',
     })
+    const wasOn = (await read($, phase)) !== null
+    hear($, '')
+    void update($, queue, () => [])
+    if (wasOn && !isActive) {
+      isActive = true
+      const id = ++sessionId
+      $.clock.after(0, () => void start($, id))
+    }
     return next(e)
   })
 
