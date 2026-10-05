@@ -30,7 +30,7 @@ function wave(frame: number) {
   return out
 }
 
-type Props = { phase: VoicePhase; words: string; reply: string; queue: string[]; sent: string; agents: (AgentRow & { depth: number })[]; goal: string; loop: string }
+type Props = { phase: VoicePhase; words: string; reply: string; queue: string[]; sent: string; agents: (AgentRow & { depth: number })[]; goal: string; loop: string; mute: '' | 'muted' | 'deafened' }
 
 const Indicator: ClientModule<Props, number> = (props, surface) => {
   if (surface.state === undefined) {
@@ -51,17 +51,20 @@ const Indicator: ClientModule<Props, number> = (props, surface) => {
   const live = agents.filter(row => row.state === 'running' || row.state === 'idle')
   const shown = [...live, ...agents.filter(row => !live.includes(row))].slice(0, AGENT_ROWS)
   const now = Date.now()
-  const glyph = look.isWave ? wave(frame) : SPINNER[frame % SPINNER.length]
-  const hint = queue.length > 0 ? '"send now" · "cancel" · "clear queue" · "stop"' : agents.length > 0 && look.label === 'Working' ? '"tell agent 2 to …" · "stop agent 2" · "agent status"' : look.hint
+  const mute = props.mute ?? ''
+  const color = mute === 'deafened' ? 'red' : mute === 'muted' ? 'yellow' : look.color
+  const label = mute ? `${look.label} · ${mute}` : look.label
+  const glyph = look.isWave && !mute ? wave(frame) : SPINNER[frame % SPINNER.length]
+  const hint = mute ? 'say "unmute" · /talk unmute' : queue.length > 0 ? '"send now" · "cancel" · "clear queue" · "stop"' : agents.length > 0 && look.label === 'Working' ? '"tell agent 2 to …" · "stop agent 2" · "agent status"' : look.hint
 
   const tail = (text: string) => (text.length > 400 ? `…${text.slice(-400)}` : text)
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={look.color} paddingX={1} width="100%">
+    <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={1} width="100%">
       <Box justifyContent="space-between">
         <Box>
-          <Text color={look.color}>{glyph} </Text>
-          <Text color={look.color} bold>{look.label}</Text>
+          <Text color={color}>{glyph} </Text>
+          <Text color={color} bold>{label}</Text>
         </Box>
         {hint ? <Text dimColor>{hint}</Text> : null}
       </Box>

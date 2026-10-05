@@ -27,6 +27,7 @@ declare module 'claude-code' {
       agents: AgentRow[]
       goal: string
       loop: string
+      mute: '' | 'muted' | 'deafened'
     }
   }
 }

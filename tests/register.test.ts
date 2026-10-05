@@ -580,6 +580,33 @@ test('a goal whose check ends the turn leaves the panel', { timeoutMs: 20_000 },
   await $.command.run(talk)
 })
 
+test('"mute" ignores speech until "unmute"', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, ['Mute.', 'Check the runner.', 'Unmute.', 'Check the runner again.'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.submitted).toEqual(['Check the runner again.'])
+  expect(w.spoken).toContain('Muted. Say unmute to come back.')
+  expect(w.spoken).toContain('Unmuted.')
+  await $.command.run(talk)
+})
+
+test('"deafen" ignores speech and keeps replies on screen until /talk unmute', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, ['Deafen.', 'Check the runner.'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  await $.turn.complete({ ...turn, answer: 'It runs every night at two.' })
+  await w.clock.advance(0)
+  expect(w.submitted).toEqual([])
+  expect(w.spoken).toContain('Deafened. Say unmute to come back.')
+  expect(w.spoken).not.toContain('It runs every night at two.')
+  await $.command.run({ ...talk, args: 'unmute' })
+  await w.clock.advance(0)
+  await $.turn.complete({ ...turn, answer: 'It runs every night at three.' })
+  await w.clock.advance(0)
+  expect(w.spoken).toContain('It runs every night at three.')
+  await $.command.run(talk)
+})
+
 test('words queued before "stop" are dropped, not sent with a later turn', { timeoutMs: 20_000 }, async ($, on) => {
   on('turn.abort', () => ({ value: undefined }))
   const w = world(on, ['also check the logs', 'Stop.'])

@@ -3,6 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRow, AgentState, VoicePhase } from '../types'
 
+type MuteState = '' | 'muted' | 'deafened'
+
 const phase = atom({ plugin: 'no-hands', key: 'phase' } as const, null)
 const words = atom({ plugin: 'no-hands', key: 'words' } as const, '')
 const reply = atom({ plugin: 'no-hands', key: 'reply' } as const, '')
@@ -11,6 +13,7 @@ const sent = atom({ plugin: 'no-hands', key: 'sent' } as const, '')
 const agents = atom({ plugin: 'no-hands', key: 'agents' } as const, [] as AgentRow[])
 const goal = atom({ plugin: 'no-hands', key: 'goal' } as const, '')
 const loop = atom({ plugin: 'no-hands', key: 'loop' } as const, '')
+const mute = atom({ plugin: 'no-hands', key: 'mute' } as const, '' as MuteState)
 
 const VOICE_SECTION =
   'Voice mode is on: the user is talking with you out loud and hears your text read aloud. ' +
@@ -60,6 +63,8 @@ const GOAL_CLEAR = /^\W*(?:(?:okay|ok|so|hey)\W+)*(?:clear|stop|end|cancel|drop|
 const LOOP_STOP = /^\W*(?:(?:okay|ok|so|hey)\W+)*(?:stop|end|cancel|kill|clear)\s+(?:the\s+)?loops?\W*$/i
 const GOAL_OFF = new Set(['clear', 'stop', 'off', 'reset', 'none', 'cancel'])
 const CONFIRM_MS = 30_000
+const MUTE = /^\W*(?:(?:okay|ok|hey|claude)\W+)*(mute|deafen)(?:\W+(?:me|mic|the mic|yourself|everything))?\W*$/i
+const UNMUTE = /^\W*(?:(?:okay|ok|hey|claude)\W+)*un[\s-]?(?:mute|deafen)(?:\W+(?:me|mic|the mic))?\W*$/i
 const NO = /^\W*(?:(?:okay|ok|so|um|uh|oh)\W+)*(?:no|nope|cancel|drop|stop|forget|scratch|never ?mind|don'?t)\b/i
 
 const NUMBERS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
@@ -85,6 +90,7 @@ let finished: AgentRow[] = []
 let isFinishDue = false
 let isGoalChecked = false
 let wakeAt = 0
+let muteState: MuteState = ''
 
 const MODELS = 'turbo (1.6 GB, default, most accurate), small (480 MB), base (145 MB), tiny (75 MB, most mistakes)'
 
@@ -148,10 +154,11 @@ function takePending($: EngineInterface) {
   return text
 }
 
-function speak($: EngineInterface, text: string, id = speechId) {
+function speak($: EngineInterface, text: string, id = speechId, isAlways = false) {
   lastSpokenAt = Date.now()
   speech = speech.then(async () => {
     if (!text || id !== speechId || !isActive) return
+    if (muteState === 'deafened' && !isAlways) return showReply($, text)
     speakingCount++
     showReply($, text)
     refresh($)
@@ -168,10 +175,23 @@ function silence($: EngineInterface) {
   void call($, '/stop')
 }
 
+function setMute($: EngineInterface, next: MuteState) {
+  muteState = next
+  void update($, mute, () => next)
+  if (isActive) void call($, '/mute', next ? 'on' : 'off')
+  if (next) hear($, '')
+  if (next === 'deafened') silence($)
+  const said = { '': 'Unmuted.', muted: 'Muted. Say unmute to come back.', deafened: 'Deafened. Say unmute to come back.' }[next]
+  void speak($, said, speechId, true)
+  return said
+}
+
 function turnOff($: EngineInterface, why?: string, isQuitting = true) {
   isActive = false
   isHearing = false
   pendingCommand = undefined
+  muteState = ''
+  void update($, mute, () => '')
   sessionId++
   speechId++
   takePending($)
@@ -301,6 +321,10 @@ async function aside($: EngineInterface, question: string) {
 async function onHeard($: EngineInterface, text: string) {
   hear($, '')
   if (!/[a-z0-9]/i.test(text)) return
+  if (muteState) return void (UNMUTE.test(text) && setMute($, ''))
+  const muting = text.match(MUTE)
+  if (muting) return void setMute($, muting[1]!.toLowerCase() === 'deafen' ? 'deafened' : 'muted')
+  if (UNMUTE.test(text)) return void speak($, 'Not muted.')
   if (pendingCommand) return confirmCommand($, text)
   if (DISCARD.test(text)) return
   if (await control($, text)) return
@@ -370,6 +394,7 @@ async function respond($: EngineInterface, answer: string) {
     submit($, takePending($))
     return
   }
+  if (muteState === 'deafened') return
   const id = speechId
   let spoken = answer.trim()
   if (!isSpeakable(spoken)) {
@@ -619,6 +644,10 @@ export const register: Register = on => {
 
   on('command.run', { command: 'talk' }, async ($, e) => {
     const [word, value] = e.args.trim().split(/\s+/)
+    if (word === 'mute' || word === 'deafen' || word === 'unmute') {
+      if (!isActive) return { text: 'Voice mode is off. Run /talk first.' }
+      return { text: setMute($, word === 'unmute' ? '' : word === 'deafen' ? 'deafened' : 'muted') }
+    }
     if (word === 'level') {
       if (!value || !(Number(value) > 0 && Number(value) < 1)) {
         return { text: 'Usage: /talk level 0.05. A number from 0 to 1; the default is 0.03. Higher ignores more background sound.' }
@@ -788,12 +817,13 @@ export const register: Register = on => {
     const lastSent = await read($, sent)
     const goalText = await read($, goal)
     const loopText = await read($, loop)
+    const muteText = await read($, mute)
     const rows = treeOrder(await read($, agents))
       .filter(({ row }) => isLive(row) || Date.now() - (row.endedAt ?? 0) < 60_000)
       .map(({ row, depth }) => ({ ...row, depth }))
     if (e.surface === 'terminal' || e.surface === 'desktop') {
       const { Client } = $.ui.resolve(e)
-      return <Client key="voice" module="./indicator.tsx" width="100%" props={{ phase: current, words: said, reply: spoken, queue: [...waiting], sent: lastSent, agents: rows, goal: goalText, loop: loopText }} />
+      return <Client key="voice" module="./indicator.tsx" width="100%" props={{ phase: current, words: said, reply: spoken, queue: [...waiting], sent: lastSent, agents: rows, goal: goalText, loop: loopText, mute: muteText }} />
     }
     const { Box, Text } = $.ui.resolve(e)
     return (
@@ -802,7 +832,7 @@ export const register: Register = on => {
         {goalText ? <Text color="yellow">Goal: {goalText} · say "clear goal"</Text> : null}
         {loopText ? <Text color="yellow">Loop: {loopText} · say "stop loop"</Text> : null}
         {spoken ? <Text>{spoken}</Text> : null}
-        <Text color="green">Voice: {current}</Text>
+        <Text color="green">Voice: {current}{muteText ? ` · ${muteText}, say "unmute"` : ''}</Text>
         {said ? <Text dimColor>{said}</Text> : null}
         {waiting.map((item, i) => (
           <Text key={`q${i}`} dimColor>

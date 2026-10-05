@@ -64,6 +64,7 @@ speaking = threading.Lock()
 barge = threading.Event()
 playing = threading.Event()
 user_talking = threading.Event()
+muted = threading.Event()
 listener = [0]
 listening = [0]
 last_used = [time.monotonic()]
@@ -243,9 +244,10 @@ def listen(send):
                 before.append(block)
                 if is_loud:
                     heard.extend(before)
-                    user_talking.set()
-                    barge.set()
-                    send({"start": True})
+                    if not muted.is_set():
+                        user_talking.set()
+                        barge.set()
+                        send({"start": True})
                 continue
             heard.append(block)
             if peak > level["speech"]:
@@ -256,7 +258,7 @@ def listen(send):
             if quiet >= PAUSE or len(heard) * BLOCK >= MAX_TURN:
                 break
             busy = partial[0] is not None and not partial[0].done()
-            if now - last_partial >= PARTIAL_EVERY and not busy:
+            if now - last_partial >= PARTIAL_EVERY and not busy and not muted.is_set():
                 last_partial = now
                 start_partial(np.concatenate(heard))
 
@@ -264,7 +266,7 @@ def listen(send):
         if partial[0] is not None:
             partial[0].result()
         text = on_model_thread(transcribe, np.concatenate(heard)) if loud_time >= MIN_SPEECH else ""
-        if text:
+        if text and not muted.is_set():
             subprocess.Popen(["afplay", SENT_SOUND])
         send({"final": text})
         if listener[0] == me:
@@ -373,6 +375,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(f"failed: {value} is not between 0 and 1")
             level["speech"] = value
             level["barge"] = level["speech"] * 2
+            return self.reply("ok")
+        if self.path == "/mute":
+            muted.set() if body.strip() == "on" else muted.clear()
             return self.reply("ok")
         if self.path == "/stop":
             stops[0] += 1
