@@ -93,37 +93,16 @@ def synthesize(text: str):
 
 def speak(text: str) -> str:
     stop.clear()
-    clips: queue.Queue = queue.Queue()
-
-    def produce():
-        for sentence in split_sentences(text):
-            if stop.is_set():
-                break
-            for clip in on_model_thread(synthesize, sentence):
-                clips.put(clip)
-        clips.put(None)
-
-    threading.Thread(target=produce, daemon=True).start()
-    while (clip := clips.get()) is not None:
+    for clip in on_model_thread(synthesize, " ".join(text.split())):
+        if stop.is_set():
+            break
         sd.play(clip, tts.sample_rate)
         while sd.get_stream().active:
             if stop.is_set():
                 sd.stop()
-                return "stopped"
+                break
             time.sleep(0.03)
     return "stopped" if stop.is_set() else "done"
-
-
-def split_sentences(text: str) -> list[str]:
-    parts, current = [], ""
-    for word in text.split():
-        current = f"{current} {word}".strip()
-        if word[-1] in ".!?" and len(current) > 20:
-            parts.append(current)
-            current = ""
-    if current:
-        parts.append(current)
-    return parts
 
 
 def listen(send):

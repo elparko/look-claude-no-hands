@@ -48,7 +48,7 @@ An animated indicator above the prompt shows what it is doing: a green wave whil
 2. **Submit.** The final transcript is submitted as your prompt. Transcripts with no words in them, which Whisper produces from background noise, are ignored.
 3. **First reply.** While voice mode is on, the mod adds one paragraph to the system prompt asking Claude to start with one sentence beginning "Plan:", under 12 words. The mod speaks that sentence as soon as Claude makes its first tool call.
 4. **Last reply.** When the turn ends, the mod sends a copy of the conversation, with the same model, one extra request: say "Done:" plus what was done and the result in one or two short sentences, or just the answer for a question, and end with a question only when a decision is needed. Most of that request is served from the prompt cache. The reply on screen is unchanged.
-5. **Speak.** Kokoro, an 82-million-parameter text-to-speech model, turns each sentence into audio and plays it. The first sentence starts in under a second. If the server cannot speak, the macOS `say` voice reads it instead.
+5. **Speak.** Kokoro, an 82-million-parameter text-to-speech model, turns the whole reply into audio in one pass, so the pacing carries across sentences, and plays it. Two sentences take about 0.3 seconds to generate. If the server cannot speak, the macOS `say` voice reads it instead.
 
 No audio leaves the machine.
 
