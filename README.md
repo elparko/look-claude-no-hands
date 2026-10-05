@@ -9,7 +9,7 @@ Type `/talk` once. After that you just talk. Claude answers out loud, and the wo
 Requirements:
 
 - A Mac with Apple Silicon (M1 or later). Speech-to-text and text-to-speech both use MLX, Apple's machine-learning framework, which needs it.
-- Claude Code
+- Claude Code 2.1.289 or later. The mod uses Claude Code's function hooks, an early-access feature; it was built and tested on 2.1.289.
 - `uv`, the Python tool installer
 
 1. Install the mod:
@@ -42,7 +42,7 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and th
 | Discard what you just said | Say "never mind" |
 | Type instead | Type a prompt. Speech stops; voice mode stays on. |
 | Stop Claude's work | Press Esc, or say "stop". Voice mode stays on. |
-| Stop voice mode | Type `/talk` again. Voice mode stays on across `/reload-plugins`. |
+| Stop voice mode | Type `/talk` again. `/reload-plugins` also turns it off. |
 
 Use headphones. With speakers, the microphone hears Claude's voice and can mistake it for you interrupting. If you use speakers, raise `NO_HANDS_BARGE`.
 

@@ -302,13 +302,11 @@ export const register: Register = on => {
       name: 'talk',
       description: 'Hands-free voice mode: talk to Claude and hear its replies. Run again to stop.',
     })
-    const wasOn = (await read($, phase)) !== null
-    hear($, '')
-    void update($, queue, () => [])
-    if (wasOn && !isActive) {
-      isActive = true
-      const id = ++sessionId
-      $.clock.after(0, () => void start($, id))
+    if (!isActive) {
+      void update($, phase, () => null)
+      hear($, '')
+      showReply($, '')
+      void update($, queue, () => [])
     }
     return next(e)
   })
@@ -398,7 +396,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, phase)
-    if (!current || e.props.hasSurvey) return next(e)
+    if (!isActive || !current || e.props.hasSurvey) return next(e)
     const said = await read($, words)
     const spoken = await read($, reply)
     const waiting = await read($, queue)
