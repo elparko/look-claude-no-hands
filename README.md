@@ -38,6 +38,11 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and th
 | Interrupt Claude's speech | Start talking. It stops right away. |
 | Remove the last queued item | Say "cancel" or "scratch that" |
 | Empty the queue | Say "clear queue" |
+| Run a slash command | Say "slash" and the command, like "slash compact" or "slash code review high". The words after the name are passed as its arguments. |
+| Message one agent | Say "tell agent 2 to skip the tests" or "ask the reviewer what it found". Agents go by number or by words from their name. |
+| Stop one agent | Say "stop agent 2" or "stop the reviewer" |
+| Hear what the agents are doing | Say "agent status" |
+| See every agent | `/talk agents` opens a pane with the full tree |
 | Send the queue right away | Say "send now" or "next". Claude's current step stops and the queue is sent as your next prompt. |
 | Discard what you just said | Say "never mind" |
 | Type instead | Type a prompt. Speech stops; voice mode stays on. |
@@ -47,6 +52,14 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and th
 Use headphones. With speakers, the microphone hears Claude's voice and can mistake it for you interrupting. If you use speakers, raise `NO_HANDS_BARGE`.
 
 Above the prompt, one panel shows what is happening: a green wave while listening, a cyan wave while Claude speaks, and a spinner while it works. Under that it shows the last thing Claude received (Sent), Claude's reply to it, your words as you say them (Hearing), and anything waiting for Claude. The border color follows the state.
+
+## Agents
+
+When Claude starts subagents, the voice panel lists them under "Agents": number, name, how long each has run, and the tool it is using now. Agents started by other agents are indented under them. Up to six show in the panel; `/talk agents` opens a pane with all of them. While voice mode is on, Claude is asked to give each agent a short name so you can address it by voice.
+
+Your message to an agent goes into that agent's conversation as a message, the same way Claude's own SendMessage tool delivers one. While Claude is working, finished agents are announced together every few seconds, so many agents finishing at once give one sentence.
+
+Agents run by a workflow are not listed; the API the mod uses does not report them.
 
 ## How it works
 
@@ -77,7 +90,7 @@ The full voice list is on the [Kokoro model page](https://huggingface.co/hexgrad
 ## Files
 
 ```
-hooks/register.tsx       the mod: /talk command, the listen and speak loop, the indicator band
+hooks/register.tsx       the mod: /talk command, the listen and speak loop, agent tracking, the indicator band and agents pane
 hooks/indicator.tsx      the animated indicator above the prompt
 voiced                   starts the server if it is not running, and waits until it is ready
 voiced.py                the server: Whisper, Kokoro, microphone and speaker

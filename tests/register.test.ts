@@ -266,3 +266,107 @@ test('a session start while voice mode is on does not start a second listener', 
   expect(w.spoken).toEqual(["I'm listening."])
   await $.command.run(talk)
 })
+
+function spawnable(on: On) {
+  on('agent.spawn', () => ({ model: 'm', agentId: 'a1' }))
+}
+
+async function spawnReviewer($: { agent: { spawn: (input: never) => Promise<unknown> } }) {
+  await $.agent.spawn({ prompt: 'Review the diff.', description: 'review the diff', name: 'reviewer', subagentType: 'Explore' } as never)
+}
+
+test('a spawned agent shows in the band with its current step', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [])
+  on('ui.render', ($, e) => $.ui.resolve(e).Box({}))
+  on('tool.call', () => ({ result: {}, text: 'ok' }) as never)
+  spawnable(on)
+  await spawnReviewer($)
+  await $.tool.call({ tool: 'Bash', command: 'npm test', agentId: 'a1' } as never)
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  const ui = await $.ui.mount({ ...band, surface: 'terminal' })
+  const tree = JSON.stringify(await ui.drawn({ in: 'voice' }))
+  expect(tree).toContain('reviewer')
+  expect(tree).toContain('Bash: npm test')
+  await ui.unmount()
+  await $.command.run(talk)
+})
+
+test('"tell the reviewer to …" sends the words to that agent', { timeoutMs: 20_000 }, async ($, on) => {
+  const messages: string[] = []
+  on('session.send', (_$, e) => {
+    messages.push(`${e.to} ${e.text}`)
+    return { isDelivered: true as const }
+  })
+  spawnable(on)
+  const w = world(on, ['Tell the reviewer to skip the tests.'])
+  await spawnReviewer($)
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(messages.length).toBe(1)
+  expect(messages[0]).toContain('a1')
+  expect(messages[0]).toContain('skip the tests')
+  expect(w.spoken).toContain('Sent to agent 1, reviewer.')
+  expect(w.submitted).toEqual([])
+  await $.command.run(talk)
+})
+
+test('"stop agent one" stops that agent', { timeoutMs: 20_000 }, async ($, on) => {
+  const stopped: string[] = []
+  on('tool.call', (_$, e) => {
+    if (e.tool === 'TaskStop') stopped.push(String((e as { task_id?: string }).task_id))
+    return { result: {}, text: 'ok' } as never
+  })
+  spawnable(on)
+  const w = world(on, ['Stop agent one.'])
+  await spawnReviewer($)
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(stopped).toEqual(['a1'])
+  expect(w.spoken).toContain('Stopped agent 1, reviewer.')
+  await $.command.run(talk)
+})
+
+test('"stop" alone still stops the main work, not an agent', { timeoutMs: 20_000 }, async ($, on) => {
+  const stopped: string[] = []
+  on('tool.call', (_$, e) => {
+    if (e.tool === 'TaskStop') stopped.push('x')
+    return { result: {}, text: 'ok' } as never
+  })
+  spawnable(on)
+  const w = world(on, ['Stop.'])
+  await spawnReviewer($)
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(stopped).toEqual([])
+  await $.command.run(talk)
+})
+
+test('"slash compact" runs the slash command', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: string[] = []
+  on('command.list', () => ({ value: [{ name: 'compact', description: '', source: 'builtin' }, { name: 'code-review', description: '', source: 'builtin' }] }) as never)
+  on('command.run', (_$, e) => {
+    ran.push(`${e.command}|${e.args}`)
+    return { text: 'ok' }
+  })
+  const w = world(on, ['Slash compact.', 'Slash code review high.', 'Slash nothing here.'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(ran).toContain('compact|')
+  expect(ran).toContain('code-review|high')
+  expect(w.submitted).toEqual([])
+  expect(w.spoken).toContain('There is no command called nothing here.')
+  await $.command.run(talk)
+})
+
+test('"clear cue" empties the queue', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, ['also check the runner', 'Clear cue.'])
+  await $.command.run(talk)
+  await $.turn.start({ text: 'run the tests', turnId: 't1' } as never)
+  await w.clock.advance(0)
+  expect(w.spoken).toContain('Cleared.')
+  await $.turn.complete(turn)
+  await w.clock.advance(0)
+  expect(w.submitted).toEqual([])
+  await $.command.run(talk)
+})
