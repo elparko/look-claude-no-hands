@@ -10,8 +10,6 @@ const queue = atom({ plugin: 'no-hands', key: 'queue' } as const, [] as string[]
 const sent = atom({ plugin: 'no-hands', key: 'sent' } as const, '')
 const agents = atom({ plugin: 'no-hands', key: 'agents' } as const, [] as AgentRow[])
 
-const AGENTS_PANE = 'no-hands-agents'
-
 const VOICE_SECTION =
   'Voice mode is on: the user is talking with you out loud and hears your text read aloud. ' +
   'Talk the way a sharp colleague would across the desk. ' +
@@ -500,6 +498,7 @@ export const register: Register = on => {
       showReply($, '')
       void update($, queue, () => [])
     }
+    void $.ui.close({ id: 'no-hands-agents' }).catch(() => {})
     await syncAgents($)
     return next(e)
   })
@@ -522,11 +521,6 @@ export const register: Register = on => {
         void speak($, 'This is how I sound now.')
       }
       return { text: `Voice set to ${value}.` }
-    }
-    if (word === 'agents') {
-      await syncAgents($)
-      await $.ui.open({ id: AGENTS_PANE, title: 'Agents' })
-      return { text: 'Agents pane opened.' }
     }
     if (isActive) {
       turnOff($)
@@ -620,28 +614,6 @@ export const register: Register = on => {
       },
     ].slice(-200))
     return result
-  })
-
-  on('ui.render', { component: 'Pane', requestId: AGENTS_PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
-    const list = await read($, agents)
-    const now = Date.now()
-    const color: Record<AgentState, string> = { running: 'magenta', idle: 'yellow', done: 'green', failed: 'red', stopped: 'red' }
-    if (list.length === 0) return <Text dimColor>No agents yet. Say "tell agent 2 to …", "stop agent 2" or "agent status".</Text>
-    const live = list.filter(isLive).length
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>{live} running · {list.length - live} ended · say "tell agent 2 to …", "stop agent 2", "agent status"</Text>
-        {treeOrder(list).map(({ row, depth }) => (
-          <Box key={row.id}>
-            <Text>{'  '.repeat(depth)}</Text>
-            <Text color={color[row.state]} bold>{row.num} </Text>
-            <Text bold={isLive(row)} dimColor={!isLive(row)}>{row.label} </Text>
-            <Text dimColor>{row.type} · {row.state} · {elapsed(row, now)}{isLive(row) && row.step ? ` · ${row.step}` : ''}</Text>
-          </Box>
-        ))}
-      </Box>
-    )
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

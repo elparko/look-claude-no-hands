@@ -84,7 +84,7 @@ const Indicator: ClientModule<Props, number> = (props, surface) => {
       {agents.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>
-            Agents · {live.length} running{agents.length > shown.length ? ` · ${agents.length - shown.length} more in /talk agents` : ''}
+            Agents · {live.length} running{agents.length > shown.length ? ` · ${agents.length - shown.length} more` : ''}
           </Text>
           {shown.map(row => (
             <Box key={row.id}>
