@@ -24,6 +24,7 @@ import time
 import warnings
 from concurrent.futures import Future
 from http.server import BaseHTTPRequestHandler
+from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 import sounddevice as sd
@@ -56,6 +57,7 @@ MIN_SPEECH = 0.4
 NOISE = {"thank you", "thanks", "thank you so much", "thanks for watching", "thank you for watching", "you", "bye", "okay", "uh", "um", "hmm"}
 
 IDLE_LIMIT = 15 * 60
+GRACE = 6.0
 STALL = 2.0
 
 jobs: queue.Queue = queue.Queue()
@@ -65,7 +67,12 @@ barge = threading.Event()
 playing = threading.Event()
 user_talking = threading.Event()
 muted = threading.Event()
-listener = [0]
+mute = [""]
+clients: dict = {}
+floor: list = [None]
+floor_lock = threading.RLock()
+mic_thread: list = [None]
+mic_stop = threading.Event()
 listening = [0]
 last_used = [time.monotonic()]
 busy = [0]
@@ -186,8 +193,6 @@ def speak_with_say(text: str, asked: int) -> str:
 
 
 def listen(send):
-    listener[0] += 1
-    me = listener[0]
     user_talking.clear()
     blocks: queue.Queue = queue.Queue()
     size = int(RATE * BLOCK)
@@ -220,7 +225,7 @@ def listen(send):
             threading.Thread(target=run, daemon=True).start()
 
         while True:
-            if listener[0] != me:
+            if mic_stop.is_set():
                 is_finishing.set()
                 if partial[0] is not None:
                     partial[0].result()
@@ -269,8 +274,7 @@ def listen(send):
         if text and not muted.is_set():
             subprocess.Popen(["afplay", SENT_SOUND])
         send({"final": text})
-        if listener[0] == me:
-            user_talking.clear()
+        user_talking.clear()
         return True
 
     if not listening[0] and not playing.is_set():
@@ -278,17 +282,205 @@ def listen(send):
     with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=size, callback=on_audio):
         listening[0] += 1
         try:
-            send({"ready": True})
+            for c in list(clients.values()):
+                c.post({"ready": True})
             last_block[0] = time.monotonic()
             while utterance():
                 pass
-            send({"moved": True})
-        except ConnectionError:
-            pass
         finally:
             listening[0] -= 1
-            if listener[0] == me:
-                user_talking.clear()
+            user_talking.clear()
+
+
+class Client:
+    def __init__(self, sid: str, label: str, send):
+        self.sid, self.label, self.send = sid, label, send
+        self.state, self.text, self.last, self.rank = "idle", "", "", 0
+        self.since = self.spoke_at = 0.0
+        self.skipped = False
+        self.gone = threading.Event()
+
+    def post(self, msg):
+        try:
+            self.send(msg)
+        except ConnectionError:
+            self.gone.set()
+
+
+def roster():
+    return [{"label": c.label, "state": c.state, "rank": c.rank, "floor": c.sid == floor[0]} for c in clients.values()]
+
+
+def broadcast():
+    with floor_lock:
+        holder = clients.get(floor[0])
+        msg = {"sessions": roster(), "holder": holder.label if holder else "", "mute": mute[0]}
+        targets = list(clients.values())
+    for c in targets:
+        c.post({**msg, "floor": c.sid == floor[0]})
+
+
+def to_floor(msg):
+    with floor_lock:
+        c = clients.get(floor[0])
+    if c is not None:
+        c.post(msg)
+
+
+def spoken_as(c, text: str) -> str:
+    return f"{c.label}: {text}" if c is not None and len(clients) > 1 else text
+
+
+def next_waiting(exclude=None):
+    found = [c for c in clients.values() if c.state == "waiting" and c.sid != exclude]
+    return min(found, key=lambda c: (c.skipped, -c.rank, c.since), default=None)
+
+
+def is_free(c) -> bool:
+    if c is None or c.state == "working":
+        return True
+    return c.state == "idle" and time.monotonic() - c.spoke_at >= GRACE and not user_talking.is_set()
+
+
+def requeue(c):
+    if c is not None and c.state == "asking" and c.last:
+        c.state, c.text, c.since, c.skipped = "waiting", c.last, time.monotonic(), True
+
+
+def settle(c):
+    c.state = "asking" if c.rank >= 3 else "idle"
+    c.spoke_at = time.monotonic()
+    c.skipped = False
+    if c.state == "idle":
+        threading.Timer(GRACE + 0.1, advance).start()
+
+
+def play(c, text: str):
+    speak(spoken_as(c, text))
+    with floor_lock:
+        if c.text == text:
+            c.text = ""
+            settle(c)
+    broadcast()
+
+
+def give(c):
+    floor[0] = c.sid
+    if c.text:
+        threading.Thread(target=play, args=(c, c.text), daemon=True).start()
+    threading.Thread(target=broadcast, daemon=True).start()
+
+
+def advance():
+    with floor_lock:
+        nxt = next_waiting(exclude=floor[0])
+        if nxt is not None and is_free(clients.get(floor[0])):
+            give(nxt)
+
+
+def run_mic():
+    try:
+        listen(to_floor)
+    except Exception as e:
+        for c in list(clients.values()):
+            c.post({"error": str(e)})
+            c.gone.set()
+    finally:
+        mic_thread[0] = None
+
+
+def join(sid: str, label: str, send):
+    with floor_lock:
+        old = clients.pop(sid, None)
+        if old is not None:
+            old.gone.set()
+        taken = {c.label for c in clients.values()}
+        name, n = label, 2
+        while name in taken:
+            name, n = f"{label} {n}", n + 1
+        c = Client(sid, name, send)
+        clients[sid] = c
+        if floor[0] not in clients:
+            floor[0] = sid
+        running = mic_thread[0]
+    if running is not None and mic_stop.is_set():
+        running.join(timeout=3)
+        running = mic_thread[0]
+    if running is None:
+        mic_stop.clear()
+        mic_thread[0] = threading.Thread(target=run_mic, daemon=True)
+        mic_thread[0].start()
+    elif listening[0]:
+        c.post({"ready": True})
+    broadcast()
+    return c
+
+
+def leave(c):
+    with floor_lock:
+        if clients.get(c.sid) is c:
+            del clients[c.sid]
+        c.gone.set()
+        if floor[0] not in clients:
+            nxt = next_waiting() or next(iter(clients.values()), None)
+            floor[0] = None
+            if nxt is not None:
+                give(nxt)
+        if not clients:
+            mic_stop.set()
+            threading.Timer(3, lambda: clients or os._exit(0)).start()
+    broadcast()
+
+
+def say_for(sid: str, kind: str, rank: int, text: str) -> str:
+    with floor_lock:
+        c = clients.get(sid)
+        is_queued = c is not None and len(clients) > 1 and floor[0] != sid
+        if is_queued and kind != "result":
+            return "skipped"
+        if is_queued:
+            c.text, c.last, c.rank, c.since, c.skipped, c.state = text, text, rank, time.monotonic(), False, "waiting"
+    if is_queued:
+        broadcast()
+        advance()
+        return "queued"
+    said = speak(spoken_as(c, text) if kind == "result" else text)
+    if c is not None and kind == "result":
+        with floor_lock:
+            c.last, c.rank = text, rank
+            settle(c)
+        broadcast()
+    return said
+
+
+def words_of(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower()).split())
+
+
+def switch_to(name: str) -> str:
+    want = words_of(name)
+    with floor_lock:
+        found = [c for c in clients.values() if words_of(c.label) == want] or [c for c in clients.values() if want and (want in words_of(c.label) or words_of(c.label) in want)]
+        if not found:
+            return "none"
+        c = found[0]
+        if floor[0] != c.sid:
+            requeue(clients.get(floor[0]))
+            give(c)
+        has_text = bool(c.text)
+    if not has_text:
+        speak(f"Now on {c.label}.")
+    return f"ok {c.label}"
+
+
+def pass_floor() -> str:
+    with floor_lock:
+        nxt = next_waiting(exclude=floor[0])
+        if nxt is None:
+            return "none"
+        requeue(clients.get(floor[0]))
+        give(nxt)
+    return f"ok {nxt.label}"
 
 
 def quit_when_idle():
@@ -320,8 +512,13 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path != "/listen":
+        url = urlparse(self.path)
+        if url.path == "/sessions":
+            with floor_lock:
+                return self.reply(json.dumps(roster()))
+        if url.path != "/listen":
             return self.reply("ok listening" if listening[0] else "ok idle")
+        query = parse_qs(url.query)
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
         self.end_headers()
@@ -335,20 +532,44 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError as e:
                     raise ConnectionError from e
 
+        c = join(query.get("session", ["solo"])[0], query.get("label", ["Claude"])[0], send)
         try:
-            listen(send)
-        except Exception as e:
-            try:
-                send({"error": str(e)})
-            except ConnectionError:
-                pass
+            while not c.gone.wait(HEARTBEAT):
+                c.post({"beat": True})
+        finally:
+            leave(c)
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length).decode()
-        if self.path == "/speak":
-            return self.reply(speak(body))
-        if self.path == "/voice":
+        url = urlparse(self.path)
+        query = parse_qs(url.query)
+        sid = query.get("session", [""])[0]
+        if url.path == "/speak":
+            rank = int(query.get("rank", ["0"])[0] or 0)
+            return self.reply(say_for(sid, query.get("kind", ["update"])[0], rank, body))
+        if url.path == "/state":
+            with floor_lock:
+                c = clients.get(sid)
+                if c is not None and body.strip() == "working":
+                    c.state, c.text = "working", ""
+                elif c is not None and body.strip() == "idle" and c.state == "working":
+                    c.state, c.spoke_at = "idle", time.monotonic()
+                    threading.Timer(GRACE + 0.1, advance).start()
+            broadcast()
+            advance()
+            return self.reply("ok")
+        if url.path == "/next":
+            return self.reply(pass_floor())
+        if url.path == "/floor":
+            return self.reply(switch_to(body))
+        if url.path == "/leave":
+            with floor_lock:
+                c = clients.get(sid)
+            if c is not None:
+                c.gone.set()
+            return self.reply("ok")
+        if url.path == "/voice":
             name = body.strip()
             if not name:
                 return self.reply("failed: no voice name")
@@ -359,14 +580,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(f"failed: {e}")
             voice["name"] = name
             return self.reply("ok")
-        if self.path == "/model":
+        if url.path == "/model":
             model = WHISPERS.get(body.strip(), body.strip())
             try:
                 on_model_thread(warm_whisper, model)
             except Exception as e:
                 return self.reply(f"failed: {e}")
             return self.reply("ok")
-        if self.path == "/level":
+        if url.path == "/level":
             try:
                 value = float(body)
             except ValueError:
@@ -376,13 +597,15 @@ class Handler(BaseHTTPRequestHandler):
             level["speech"] = value
             level["barge"] = level["speech"] * 2
             return self.reply("ok")
-        if self.path == "/mute":
-            muted.set() if body.strip() == "on" else muted.clear()
+        if url.path == "/mute":
+            mute[0] = body.strip() if body.strip() in ("muted", "deafened") else ""
+            muted.set() if mute[0] else muted.clear()
+            broadcast()
             return self.reply("ok")
-        if self.path == "/stop":
+        if url.path == "/stop":
             stops[0] += 1
             return self.reply("ok")
-        if self.path == "/quit":
+        if url.path == "/quit":
             self.reply("ok")
             os._exit(0)
         self.send_error(404)

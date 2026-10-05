@@ -1,13 +1,14 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-function world(on: On, said: string[], { speakExit = 0, startExit = 0, isMoved = false, isDropping = false } = {}) {
+function world(on: On, said: (string | object)[], { speakExit = 0, startExit = 0, isMoved = false, isDropping = false, replies = {} as Record<string, string> } = {}) {
   const clock = mock.clock(on)
   const spoken: string[] = []
   const systemSaid: string[] = []
   const submitted: string[] = []
   const toasts: string[] = []
   const models: string[] = []
+  const calls: string[] = []
   let quits = 0
   let quit = () => {}
   const ok = (exitCode: number, stdout = '') => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
@@ -19,15 +20,18 @@ function world(on: On, said: string[], { speakExit = 0, startExit = 0, isMoved =
   on('process.run', (_$, e) => {
     if (e.argv[0]?.endsWith('/voiced')) return ok(startExit)
     const url = e.argv[e.argv.length - 1] ?? ''
-    if (url.endsWith('/speak')) {
+    const path = url.replace('http://voice', '').split('?')[0] ?? ''
+    calls.push(`${url.replace('http://voice', '')} ${e.init?.stdin ?? ''}`.trim())
+    if (replies[path] !== undefined) return ok(0, replies[path])
+    if (path === '/speak') {
       if (speakExit === 0) spoken.push(e.init?.stdin ?? '')
       return ok(speakExit, 'done')
     }
-    if (url.endsWith('/quit')) {
+    if (path === '/quit' || path === '/leave') {
       quits++
       quit()
     }
-    if (url.endsWith('/model')) models.push(e.init?.stdin ?? '')
+    if (path === '/model') models.push(e.init?.stdin ?? '')
     return ok(0, 'ok')
   })
   on('process.spawn', async function* () {
@@ -35,6 +39,10 @@ function world(on: On, said: string[], { speakExit = 0, startExit = 0, isMoved =
     const quitting = new Promise<void>(resolve => (quit = resolve))
     yield line({ ready: true })
     for (const text of said) {
+      if (typeof text === 'object') {
+        yield line(text)
+        continue
+      }
       yield line({ start: true })
       yield line({ partial: text.split(' ')[0] })
       yield line({ final: text })
@@ -56,7 +64,7 @@ function world(on: On, said: string[], { speakExit = 0, startExit = 0, isMoved =
     submitted.push(e.text)
     return isDropping ? { drop: 'blocked' } : { text: e.text }
   })
-  return { clock, spoken, systemSaid, submitted, toasts, models, quits: () => quits }
+  return { clock, spoken, systemSaid, submitted, toasts, models, calls, quits: () => quits }
 }
 
 const talk = { command: 'talk', args: '', origin: { kind: 'composer' as const }, presentation: { isFullscreen: false, columns: 120 } }
@@ -604,6 +612,79 @@ test('"deafen" ignores speech and keeps replies on screen until /talk unmute', {
   await $.turn.complete({ ...turn, answer: 'It runs every night at three.' })
   await w.clock.advance(0)
   expect(w.spoken).toContain('It runs every night at three.')
+  await $.command.run(talk)
+})
+
+const two = (waiting: object = { label: 'fa-reader', state: 'asking', rank: 3, floor: false }) => ({
+  sessions: [{ label: 'ORION', state: 'idle', rank: 0, floor: true }, waiting],
+  holder: 'ORION',
+  floor: true,
+  mute: '',
+})
+
+test('with one session, "next" and "switch to" are ordinary speech', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, ['Switch to the settings page.'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.submitted).toEqual(['Switch to the settings page.'])
+  expect(w.calls.some(c => c.startsWith('/floor'))).toBe(false)
+  await $.command.run(talk)
+})
+
+test('"next" passes the mic to the next waiting session', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [two(), 'Next.'], { replies: { '/next': 'ok fa-reader' } })
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.calls.some(c => c.startsWith('/next?session='))).toBe(true)
+  expect(w.submitted).toEqual([])
+  await $.command.run(talk)
+})
+
+test('"switch to" moves the mic, and falls through to a prompt when no session matches', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [two(), 'Switch to fa reader.'], { replies: { '/floor': 'ok fa-reader' } })
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.calls).toContain('/floor fa reader')
+  expect(w.submitted).toEqual([])
+  await $.command.run(talk)
+})
+
+test('"switch to" with no matching session is sent as a prompt', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [two(), 'Go to the settings page.'], { replies: { '/floor': 'none' } })
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.submitted).toEqual(['Go to the settings page.'])
+  await $.command.run(talk)
+})
+
+test('"what\'s waiting" names the other sessions and what they hold', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [two({ label: 'fa-reader', state: 'waiting', rank: 3, floor: false }), "What's waiting?"])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.spoken).toContain('fa-reader has a question.')
+  await $.command.run(talk)
+})
+
+test('a finished answer is sent to the server as a ranked result', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  await $.turn.complete({ ...turn, answer: 'Two nights are missing. Should I backfill them?' })
+  await w.clock.advance(0)
+  await $.turn.complete({ ...turn, answer: 'The backfill failed on night two.' })
+  await w.clock.advance(0)
+  await $.turn.complete({ ...turn, answer: 'Backfilled both nights.' })
+  await w.clock.advance(0)
+  const ranks = w.calls.filter(c => c.includes('kind=result')).map(c => c.match(/rank=(\d)/)?.[1])
+  expect(ranks).toEqual(['3', '2', '1'])
+  await $.command.run(talk)
+})
+
+test('mute set in another session applies here', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [{ ...two(), mute: 'muted' }, 'Check the runner.'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(w.submitted).toEqual([])
   await $.command.run(talk)
 })
 

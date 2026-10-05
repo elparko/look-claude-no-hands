@@ -54,7 +54,25 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and tw
 | Stop Claude's work | Press Esc, or say "stop", "pause", "hold on", or "wait" on its own. A spoken stop also clears an active goal and stops a loop. Voice mode stays on. Anything still queued is dropped, and Claude says so. |
 | Stop voice mode | Type `/talk` again. `/reload-plugins` also turns it off. |
 
-Voice works in one Claude Code session at a time. Running `/talk` in a second session moves the microphone there, and the first session turns voice off with a notice.
+### Several sessions at once
+
+Run `/talk` in as many Claude Code sessions as you like. They share one microphone and one voice, and one session holds the mic at a time. What you say goes to that session. Each session is named by its folder, like "ORION" or "fa-reader".
+
+When a session finishes while another holds the mic, its reply waits in a queue instead of talking over you. When the mic is free, the reply that most needs you plays next, starting with the session's name:
+
+1. A question for you
+2. A failure or a block
+3. A finished result
+
+Ties go to whoever has waited longest. The mic is free when the session holding it starts working on what you said, or 6 seconds after it gives a result that is not a question. A session that asked you a question keeps the mic until you answer or move on. Progress updates from sessions that do not hold the mic are skipped.
+
+| To | Do this |
+| --- | --- |
+| Move on to the next waiting session | Say "next" or "skip". A skipped question goes to the back of the queue. |
+| Talk to a session | Say "switch to ORION". If no session matches, your words go to the current one as a prompt. |
+| Hear what is waiting | Say "what's waiting" |
+
+The panel's Mic line shows which session holds the mic and what the others are doing. Mute and deafen apply to every session.
 
 If the microphone stops sending sound (headphones unplugged, for example), voice mode turns off with a notice. Run `/talk` again to pick up the current microphone.
 

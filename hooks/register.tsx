@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRow, AgentState, VoicePhase } from '../types'
+import type { AgentRow, AgentState, SessionRow, VoicePhase } from '../types'
 
 type MuteState = '' | 'muted' | 'deafened'
 
@@ -14,6 +14,7 @@ const agents = atom({ plugin: 'no-hands', key: 'agents' } as const, [] as AgentR
 const goal = atom({ plugin: 'no-hands', key: 'goal' } as const, '')
 const loop = atom({ plugin: 'no-hands', key: 'loop' } as const, '')
 const mute = atom({ plugin: 'no-hands', key: 'mute' } as const, '' as MuteState)
+const sessions = atom({ plugin: 'no-hands', key: 'sessions' } as const, [] as SessionRow[])
 
 const VOICE_SECTION =
   'Voice mode is on: the user is talking with you out loud and hears your text read aloud. ' +
@@ -63,6 +64,10 @@ const GOAL_CLEAR = /^\W*(?:(?:okay|ok|so|hey)\W+)*(?:clear|stop|end|cancel|drop|
 const LOOP_STOP = /^\W*(?:(?:okay|ok|so|hey)\W+)*(?:stop|end|cancel|kill|clear)\s+(?:the\s+)?loops?\W*$/i
 const GOAL_OFF = new Set(['clear', 'stop', 'off', 'reset', 'none', 'cancel'])
 const CONFIRM_MS = 30_000
+const NEXT_SESSION = /^\W*(?:(?:okay|ok|so)\W+)*(?:next(?: session| one)?|skip(?: it| this| that)?)\W*$/i
+const SWITCH = /^\W*(?:(?:okay|ok|so)\W+)*(?:switch|go|go back|back|talk|move)\s+(?:over\s+)?to\s+(.+?)\W*$/i
+const WAITING = /^\W*(?:(?:what|who)(?:'s| is) waiting|(?:list (?:the )?)?sessions|session status)\W*$/i
+const RANK_WORD: Record<number, string> = { 3: 'a question', 2: 'a problem', 1: 'a result' }
 const MUTE = /^\W*(?:(?:okay|ok|hey|claude)\W+)*(mute|deafen)(?:\W+(?:me|mic|the mic|yourself|everything))?\W*$/i
 const UNMUTE = /^\W*(?:(?:okay|ok|hey|claude)\W+)*un[\s-]?(?:mute|deafen)(?:\W+(?:me|mic|the mic))?\W*$/i
 const NO = /^\W*(?:(?:okay|ok|so|um|uh|oh)\W+)*(?:no|nope|cancel|drop|stop|forget|scratch|never ?mind|don'?t)\b/i
@@ -70,7 +75,7 @@ const NO = /^\W*(?:(?:okay|ok|so|um|uh|oh)\W+)*(?:no|nope|cancel|drop|stop|forge
 const NUMBERS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
 const SOUNDS_LIKE: Record<string, number> = { won: 1, to: 2, too: 2, tree: 3, for: 4, fore: 4, ate: 8 }
 
-type Heard = { ready?: boolean; start?: boolean; partial?: string; final?: string; error?: string; moved?: boolean }
+type Heard = { ready?: boolean; start?: boolean; partial?: string; final?: string; error?: string; moved?: boolean; sessions?: SessionRow[]; mute?: MuteState }
 
 let isActive = false
 let isHearing = false
@@ -91,6 +96,8 @@ let isFinishDue = false
 let isGoalChecked = false
 let wakeAt = 0
 let muteState: MuteState = ''
+let sid = ''
+let label = 'Claude'
 
 const MODELS = 'turbo (1.6 GB, default, most accurate), small (480 MB), base (145 MB), tiny (75 MB, most mistakes)'
 
@@ -154,7 +161,13 @@ function takePending($: EngineInterface) {
   return text
 }
 
-function speak($: EngineInterface, text: string, id = speechId, isAlways = false) {
+function rankOf(text: string) {
+  if (text.includes('?')) return 3
+  if (/\b(fail(?:ed|s|ing|ure)?|error|broke|broken|blocked|stuck|can'?t|cannot|couldn'?t)\b/i.test(text)) return 2
+  return 1
+}
+
+function speak($: EngineInterface, text: string, { id = speechId, isAlways = false, rank }: { id?: number; isAlways?: boolean; rank?: number } = {}) {
   lastSpokenAt = Date.now()
   speech = speech.then(async () => {
     if (!text || id !== speechId || !isActive) return
@@ -162,7 +175,8 @@ function speak($: EngineInterface, text: string, id = speechId, isAlways = false
     speakingCount++
     showReply($, text)
     refresh($)
-    const result = await call($, '/speak', text)
+    const kind = rank === undefined ? 'update' : 'result'
+    const result = await call($, `/speak?session=${encodeURIComponent(sid)}&kind=${kind}&rank=${rank ?? 0}`, text)
     speakingCount--
     refresh($)
     if (result === undefined && isActive && !isHearing) await $.audio.speak(text).catch(() => {})
@@ -178,11 +192,11 @@ function silence($: EngineInterface) {
 function setMute($: EngineInterface, next: MuteState) {
   muteState = next
   void update($, mute, () => next)
-  if (isActive) void call($, '/mute', next ? 'on' : 'off')
+  if (isActive) void call($, '/mute', next)
   if (next) hear($, '')
   if (next === 'deafened') silence($)
   const said = { '': 'Unmuted.', muted: 'Muted. Say unmute to come back.', deafened: 'Deafened. Say unmute to come back.' }[next]
-  void speak($, said, speechId, true)
+  void speak($, said, { isAlways: true })
   return said
 }
 
@@ -195,7 +209,8 @@ function turnOff($: EngineInterface, why?: string, isQuitting = true) {
   sessionId++
   speechId++
   takePending($)
-  if (isQuitting) void call($, '/quit')
+  if (isQuitting) void call($, `/leave?session=${encodeURIComponent(sid)}`)
+  void update($, sessions, () => [])
   refresh($)
   hear($, '')
   showReply($, '')
@@ -288,10 +303,28 @@ async function control($: EngineInterface, text: string) {
     void speak($, 'Cleared.')
     return true
   }
-  if (SEND_NOW.test(text)) {
-    if (pending.length === 0) return false
+  if (SEND_NOW.test(text) && pending.length > 0) {
     await stopWork($)
     submit($, takePending($))
+    return true
+  }
+  const others = (await read($, sessions)).filter(row => !row.floor)
+  if (others.length > 0 && NEXT_SESSION.test(text)) {
+    const r = await call($, `/next?session=${encodeURIComponent(sid)}`)
+    if (!r?.startsWith('ok')) void speak($, 'Nothing else is waiting.')
+    return true
+  }
+  const target = text.match(SWITCH)?.[1]
+  if (others.length > 0 && target) {
+    const r = await call($, '/floor', target)
+    return r?.startsWith('ok') ?? false
+  }
+  if (others.length > 0 && WAITING.test(text)) {
+    const waiting = others.filter(row => row.state === 'waiting' || row.state === 'asking')
+    const working = others.filter(row => row.state === 'working')
+    const parts = waiting.map(row => `${row.label} has ${RANK_WORD[row.rank] ?? 'something'}`)
+    if (working.length) parts.push(`${working.map(row => row.label).join(' and ')} ${working.length === 1 ? 'is' : 'are'} working`)
+    void speak($, parts.length ? `${parts.join('. ')}.` : 'Nothing else is waiting.')
     return true
   }
   if (STOP.test(text)) {
@@ -344,7 +377,8 @@ async function converse($: EngineInterface) {
   let why = 'Voice mode off: lost the connection to the voice server.'
   try {
     let rest = ''
-    const stream = $.process.spawn({ argv: ['curl', '-sN', '--unix-socket', socket($), 'http://voice/listen'] })
+    const url = `http://voice/listen?session=${encodeURIComponent(sid)}&label=${encodeURIComponent(label)}`
+    const stream = $.process.spawn({ argv: ['curl', '-sN', '--unix-socket', socket($), url] })
     for await (const { stream: pipe, text } of stream) {
       if (id !== sessionId) return
       if (pipe !== 'stdout') continue
@@ -353,6 +387,11 @@ async function converse($: EngineInterface) {
       for (const line of lines) {
         const msg = JSON.parse(line) as Heard
         if (msg.ready) void speak($, "I'm listening.")
+        if (msg.sessions) void update($, sessions, () => msg.sessions!)
+        if (msg.mute !== undefined && msg.mute !== muteState) {
+          muteState = msg.mute
+          void update($, mute, () => muteState)
+        }
         if (msg.start) {
           isHearing = true
           speechId++
@@ -375,6 +414,8 @@ async function converse($: EngineInterface) {
 
 async function start($: EngineInterface, id: number) {
   if (id !== sessionId) return
+  sid = await $.session.id().catch(() => `s${Date.now()}`)
+  label = (await $.session.cwd().catch(() => '')).split('/').filter(Boolean).pop() ?? 'Claude'
   refresh($)
   void update($, phase, () => 'loading')
   const env: Record<string, string> = {
@@ -405,7 +446,7 @@ async function respond($: EngineInterface, answer: string) {
     refresh($)
     spoken = forked?.isAnswered ? forked.text.trim() : plain(answer) || 'Done.'
   }
-  if (isActive && !isWorking) await speak($, spoken.slice(0, 4000), id)
+  if (isActive && !isWorking) await speak($, spoken.slice(0, 4000), { id, rank: rankOf(spoken) })
 }
 
 function setAgent($: EngineInterface, id: string, fn: (row: AgentRow) => AgentRow) {
@@ -628,7 +669,7 @@ export const register: Register = on => {
       description: 'Hands-free voice mode: talk to Claude and hear its replies. Run again to stop.',
     })
     if (!isActive && (await read($, phase)) !== null) {
-      void call($, '/quit')
+      void call($, `/leave?session=${encodeURIComponent(await $.session.id())}`)
       $.ui.toast('Voice mode turned off by the reload. Run /talk to turn it back on.')
     }
     if (!isActive) {
@@ -713,6 +754,7 @@ export const register: Register = on => {
     pendingCommand = undefined
     isGoalChecked = false
     if (await read($, loop)) void syncLoops($)
+    if (isActive) void call($, `/state?session=${encodeURIComponent(sid)}`, 'working')
     isWorking = true
     if (isActive) {
       showReply($, '')
@@ -773,6 +815,7 @@ export const register: Register = on => {
     if (isGoalChecked && !e.isAborted) await update($, goal, () => '')
     isGoalChecked = false
     if (!isActive) return result
+    void call($, `/state?session=${encodeURIComponent(sid)}`, 'idle')
     refresh($)
     if (e.isAborted) {
       silence($)
@@ -818,12 +861,13 @@ export const register: Register = on => {
     const goalText = await read($, goal)
     const loopText = await read($, loop)
     const muteText = await read($, mute)
+    const sessionRows = await read($, sessions)
     const rows = treeOrder(await read($, agents))
       .filter(({ row }) => isLive(row) || Date.now() - (row.endedAt ?? 0) < 60_000)
       .map(({ row, depth }) => ({ ...row, depth }))
     if (e.surface === 'terminal' || e.surface === 'desktop') {
       const { Client } = $.ui.resolve(e)
-      return <Client key="voice" module="./indicator.tsx" width="100%" props={{ phase: current, words: said, reply: spoken, queue: [...waiting], sent: lastSent, agents: rows, goal: goalText, loop: loopText, mute: muteText }} />
+      return <Client key="voice" module="./indicator.tsx" width="100%" props={{ phase: current, words: said, reply: spoken, queue: [...waiting], sent: lastSent, agents: rows, goal: goalText, loop: loopText, mute: muteText, sessions: [...sessionRows] }} />
     }
     const { Box, Text } = $.ui.resolve(e)
     return (
@@ -832,6 +876,7 @@ export const register: Register = on => {
         {goalText ? <Text color="yellow">Goal: {goalText} · say "clear goal"</Text> : null}
         {loopText ? <Text color="yellow">Loop: {loopText} · say "stop loop"</Text> : null}
         {spoken ? <Text>{spoken}</Text> : null}
+        {sessionRows.length > 1 ? <Text dimColor>Sessions: {sessionRows.map(row => `${row.label}${row.floor ? ' (mic)' : ` ${row.state}`}`).join(' · ')}</Text> : null}
         <Text color="green">Voice: {current}{muteText ? ` · ${muteText}, say "unmute"` : ''}</Text>
         {said ? <Text dimColor>{said}</Text> : null}
         {waiting.map((item, i) => (

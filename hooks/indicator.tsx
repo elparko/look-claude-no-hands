@@ -1,6 +1,6 @@
 import type { ClientModule } from 'claude-code'
 
-import type { AgentRow, AgentState, VoicePhase } from '../types'
+import type { AgentRow, AgentState, SessionRow, VoicePhase } from '../types'
 
 const BARS = '▁▂▃▄▅▆▇█'
 const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
@@ -30,7 +30,7 @@ function wave(frame: number) {
   return out
 }
 
-type Props = { phase: VoicePhase; words: string; reply: string; queue: string[]; sent: string; agents: (AgentRow & { depth: number })[]; goal: string; loop: string; mute: '' | 'muted' | 'deafened' }
+type Props = { phase: VoicePhase; words: string; reply: string; queue: string[]; sent: string; agents: (AgentRow & { depth: number })[]; goal: string; loop: string; mute: '' | 'muted' | 'deafened'; sessions: SessionRow[] }
 
 const Indicator: ClientModule<Props, number> = (props, surface) => {
   if (surface.state === undefined) {
@@ -52,6 +52,10 @@ const Indicator: ClientModule<Props, number> = (props, surface) => {
   const shown = [...live, ...agents.filter(row => !live.includes(row))].slice(0, AGENT_ROWS)
   const now = Date.now()
   const mute = props.mute ?? ''
+  const sessions = props.sessions ?? []
+  const holder = sessions.find(row => row.floor)
+  const STATE_WORD: Record<SessionRow['state'], string> = { working: 'working', waiting: 'waiting', asking: 'asked you', idle: 'idle' }
+  const RANK_WORD: Record<number, string> = { 3: 'question', 2: 'problem', 1: 'result' }
   const color = mute === 'deafened' ? 'red' : mute === 'muted' ? 'yellow' : look.color
   const label = mute ? `${look.label} · ${mute}` : look.label
   const glyph = look.isWave && !mute ? wave(frame) : SPINNER[frame % SPINNER.length]
@@ -68,6 +72,19 @@ const Indicator: ClientModule<Props, number> = (props, surface) => {
         </Box>
         {hint ? <Text dimColor>{hint}</Text> : null}
       </Box>
+      {sessions.length > 1 ? (
+        <Box marginTop={1}>
+          <Text color="blue" bold>Mic     </Text>
+          <Text bold>{holder?.label ?? 'nobody'} </Text>
+          <Text dimColor wrap="truncate-end">
+            {sessions
+              .filter(row => !row.floor)
+              .map(row => `${row.label} ${STATE_WORD[row.state]}${row.state === 'waiting' ? ` (${RANK_WORD[row.rank] ?? 'result'})` : ''}`)
+              .join(' · ')}
+            {' · "next" · "switch to …"'}
+          </Text>
+        </Box>
+      ) : null}
       {goal || loop ? (
         <Box flexDirection="column" marginTop={1}>
           {goal ? (

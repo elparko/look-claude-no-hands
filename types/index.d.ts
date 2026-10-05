@@ -1,5 +1,7 @@
 export type VoicePhase = 'loading' | 'listening' | 'working' | 'preparing' | 'speaking'
 
+export type SessionRow = { label: string; state: 'working' | 'waiting' | 'asking' | 'idle'; rank: number; floor: boolean }
+
 export type AgentState = 'running' | 'idle' | 'done' | 'failed' | 'stopped'
 
 export type AgentRow = {
@@ -28,6 +30,7 @@ declare module 'claude-code' {
       goal: string
       loop: string
       mute: '' | 'muted' | 'deafened'
+      sessions: SessionRow[]
     }
   }
 }
