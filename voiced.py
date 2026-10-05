@@ -31,8 +31,15 @@ warnings.filterwarnings("ignore")
 
 RATE = 16000
 BLOCK = 0.1
-WHISPER = "mlx-community/whisper-large-v3-turbo"
+WHISPERS = {
+    "turbo": "mlx-community/whisper-large-v3-turbo",
+    "small": "mlx-community/whisper-small.en-mlx",
+    "base": "mlx-community/whisper-base.en-mlx",
+    "tiny": "mlx-community/whisper-tiny.en-mlx",
+}
+hearing = {"model": WHISPERS.get(os.environ.get("NO_HANDS_WHISPER", "turbo"), os.environ.get("NO_HANDS_WHISPER", ""))}
 KOKORO = "mlx-community/Kokoro-82M-bf16"
+USE_SAY = os.environ.get("NO_HANDS_TTS", "kokoro") == "say"
 voice = {"name": os.environ.get("NO_HANDS_VOICE", "af_bella")}
 SPEED = float(os.environ.get("NO_HANDS_SPEED", "1.0"))
 PAUSE = float(os.environ.get("NO_HANDS_PAUSE", "3.0"))
@@ -71,10 +78,11 @@ def model_thread(ready: threading.Event):
 
     global tts, whisper
     try:
-        tts = load_model(KOKORO)
         whisper = mlx_whisper
-        list(tts.generate(text="Ready.", voice=voice["name"], lang_code=voice["name"][0]))
-        whisper.transcribe(np.zeros(RATE, dtype=np.float32), path_or_hf_repo=WHISPER, language="en")
+        if not USE_SAY:
+            tts = load_model(KOKORO)
+            list(tts.generate(text="Ready.", voice=voice["name"], lang_code=voice["name"][0]))
+        warm_whisper(hearing["model"])
     except Exception as e:
         print(f"failed: {e}", flush=True)
         os._exit(1)
@@ -87,9 +95,14 @@ def model_thread(ready: threading.Event):
             done.set_exception(e)
 
 
+def warm_whisper(model: str):
+    whisper.transcribe(np.zeros(RATE, dtype=np.float32), path_or_hf_repo=model, language="en")
+    hearing["model"] = model
+
+
 def transcribe(audio: np.ndarray) -> str:
     result = whisper.transcribe(
-        audio, path_or_hf_repo=WHISPER, language="en", condition_on_previous_text=False
+        audio, path_or_hf_repo=hearing["model"], language="en", condition_on_previous_text=False
     )
     spoken = [
         seg["text"]
@@ -113,6 +126,8 @@ def speak(text: str) -> str:
         time.sleep(0.05)
     stop.clear()
     barge.clear()
+    if USE_SAY:
+        return speak_with_say(" ".join(text.split()))
     clips = on_model_thread(synthesize, " ".join(text.split()))
     if user_talking.is_set() or stop.is_set():
         return "interrupted"
@@ -125,6 +140,22 @@ def speak(text: str) -> str:
                     sd.stop()
                     return "interrupted"
                 time.sleep(0.03)
+    finally:
+        playing.clear()
+    return "done"
+
+
+def speak_with_say(text: str) -> str:
+    if user_talking.is_set() or stop.is_set():
+        return "interrupted"
+    playing.set()
+    say = subprocess.Popen(["say", "-r", str(round(185 * SPEED)), text])
+    try:
+        while say.poll() is None:
+            if stop.is_set() or barge.is_set():
+                say.terminate()
+                return "interrupted"
+            time.sleep(0.03)
     finally:
         playing.clear()
     return "done"
@@ -275,6 +306,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(speak(body))
         if self.path == "/voice":
             voice["name"] = body.strip()
+            return self.reply("ok")
+        if self.path == "/model":
+            model = WHISPERS.get(body.strip(), body.strip())
+            try:
+                on_model_thread(warm_whisper, model)
+            except Exception as e:
+                return self.reply(f"failed: {e}")
             return self.reply("ok")
         if self.path == "/level":
             level["speech"] = float(body)

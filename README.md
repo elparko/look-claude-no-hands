@@ -23,7 +23,7 @@ Requirements:
 
 3. Type `/talk`. macOS asks to give your terminal app microphone access the first time. Allow it.
 
-The first `/talk` takes a few minutes: `uv` installs the Python packages, and the Whisper speech model (about 1.5 GB) and the Kokoro voice model (about 340 MB) download once. After that, starting takes about 8 seconds.
+The first `/talk` takes a few minutes: `uv` installs the Python packages, and two models download once: Whisper, which turns your speech into text (1.6 GB), and Kokoro, which speaks the replies (340 MB). After that, starting takes about 8 seconds. To download less, see [Smaller downloads](#smaller-downloads).
 
 ## Use
 
@@ -35,6 +35,7 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and th
 | Add something while Claude works | Just talk. It waits in a numbered list above the prompt until Claude's next step; if the turn ends first, it is sent as your next prompt. |
 | Ignore more background sound | `/talk level 0.05` (default 0.03). Takes effect at once. |
 | Change the voice | `/talk voice bm_george`. Plays a sample at once. `/talk voice` lists the choices. |
+| Change the speech recognition model | `/talk model small`. Choices: `turbo`, `small`, `base`, `tiny`. A model downloads the first time you pick it. |
 | Interrupt Claude's speech | Start talking. It stops right away. |
 | Remove the last queued item | Say "cancel" or "scratch that" |
 | Empty the queue | Say "clear queue" |
@@ -83,8 +84,49 @@ No audio leaves the machine.
 | `NO_HANDS_PAUSE` | `3.0` | Seconds of silence that send what you said. |
 | `NO_HANDS_LEVEL` | `0.03` | Volume, from 0 to 1, that counts as speech. Raise it in a loud room. |
 | `NO_HANDS_BARGE` | twice `NO_HANDS_LEVEL` | Volume that counts as you interrupting while Claude speaks. Raise it if you use speakers. |
+| `NO_HANDS_WHISPER` | `turbo` | Speech recognition model: `turbo`, `small`, `base`, `tiny`, or any MLX Whisper repo on Hugging Face (`mlx-community/whisper-medium.en-mlx`). |
+| `NO_HANDS_TTS` | `kokoro` | `say` uses the built-in macOS voice instead of Kokoro, so Kokoro never downloads. |
 
 The full voice list is on the [Kokoro model page](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md).
+
+## Smaller downloads
+
+Only the models you use are downloaded. Two choices set the size.
+
+**Speech recognition.** Set `NO_HANDS_WHISPER`, or switch during a session with `/talk model`:
+
+| Model | Download | Notes |
+|---|---|---|
+| `turbo` | 1.6 GB | Default. Fewest mistakes. |
+| `small` | 480 MB | English only. Good in a quiet room. |
+| `base` | 145 MB | English only. Misses more words. |
+| `tiny` | 75 MB | English only. Fastest, most mistakes. |
+
+**Claude's voice.** Kokoro is 340 MB, all its voices included (27 MB of that). Changing voices with `/talk voice` downloads nothing new. For no download at all, set `NO_HANDS_TTS=say` to use the macOS voice; it uses the System Voice set in System Settings > Accessibility. It sounds more robotic, and `/talk voice` does nothing in this mode.
+
+The lightest setup is about 75 MB of models plus the Python packages:
+
+```
+export NO_HANDS_WHISPER=tiny
+export NO_HANDS_TTS=say
+```
+
+Add those lines to your shell profile (`~/.zshrc`) and restart Claude Code.
+
+**Remove a model you no longer use.** Models are stored by Hugging Face under `~/.cache/huggingface/hub`, one folder each. To see them and their sizes:
+
+```
+du -sh ~/.cache/huggingface/hub/models--mlx-community--*
+```
+
+Delete a folder to free its space; the model downloads again if you pick it later:
+
+```
+rm -rf ~/.cache/huggingface/hub/models--mlx-community--whisper-large-v3-turbo
+rm -rf ~/.cache/huggingface/hub/models--mlx-community--Kokoro-82M-bf16
+```
+
+To remove everything the mod downloaded, delete those model folders and run `uv cache clean`, which also removes the Python packages (and anything else `uv` has cached).
 
 ## Files
 

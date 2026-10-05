@@ -69,8 +69,11 @@ let pending: string[] = []
 let turnId: string | undefined
 let micLevel: string | undefined
 let voiceName: string | undefined
+let whisperModel: string | undefined
 let finished: AgentRow[] = []
 let isFinishDue = false
+
+const MODELS = 'turbo (1.6 GB, default, most accurate), small (480 MB), base (145 MB), tiny (75 MB, most mistakes)'
 
 const VOICES =
   'American women: af_bella (default), af_heart, af_nicole, af_sarah, af_nova, af_sky. ' +
@@ -284,6 +287,7 @@ async function start($: EngineInterface, id: number) {
   const env: Record<string, string> = {
     ...(micLevel ? { NO_HANDS_LEVEL: micLevel } : {}),
     ...(voiceName ? { NO_HANDS_VOICE: voiceName } : {}),
+    ...(whisperModel ? { NO_HANDS_WHISPER: whisperModel } : {}),
   }
   const r = await $.process.run([`${$.plugin.root}/voiced`, socket($)], { env, timeoutMs: 600_000 }).catch(() => undefined)
   if (!isActive || id !== sessionId) return
@@ -521,6 +525,18 @@ export const register: Register = on => {
         void speak($, 'This is how I sound now.')
       }
       return { text: `Voice set to ${value}.` }
+    }
+    if (word === 'model') {
+      if (!value || !(/^(turbo|small|base|tiny)$/.test(value) || value.includes('/'))) return { text: `Usage: /talk model small. Speech recognition models: ${MODELS}.` }
+      whisperModel = value
+      if (isActive) {
+        $.clock.after(0, async () => {
+          const r = await call($, '/model', value)
+          void speak($, r === 'ok' ? `Switched to the ${value} model.` : `The ${value} model did not load.`)
+        })
+        return { text: `Switching speech recognition to ${value}. It downloads once the first time.` }
+      }
+      return { text: `Speech recognition set to ${value} for this session. It downloads once the first time.` }
     }
     if (isActive) {
       turnOff($)

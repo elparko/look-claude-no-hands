@@ -7,6 +7,7 @@ function world(on: On, said: string[], { speakExit = 0, startExit = 0 } = {}) {
   const systemSaid: string[] = []
   const submitted: string[] = []
   const toasts: string[] = []
+  const models: string[] = []
   let quit = () => {}
   const ok = (exitCode: number, stdout = '') => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
   on('model.fork', () => ({ value: { isAnswered: true as const, text: 'Deploy finished.', usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }))
@@ -22,6 +23,7 @@ function world(on: On, said: string[], { speakExit = 0, startExit = 0 } = {}) {
       return ok(speakExit, 'done')
     }
     if (url.endsWith('/quit')) quit()
+    if (url.endsWith('/model')) models.push(e.init?.stdin ?? '')
     return ok(0, 'ok')
   })
   on('process.spawn', async function* () {
@@ -46,7 +48,7 @@ function world(on: On, said: string[], { speakExit = 0, startExit = 0 } = {}) {
     submitted.push(e.text)
     return { text: e.text }
   })
-  return { clock, spoken, systemSaid, submitted, toasts }
+  return { clock, spoken, systemSaid, submitted, toasts, models }
 }
 
 const talk = { command: 'talk', args: '', origin: { kind: 'composer' as const }, presentation: { isFullscreen: false, columns: 120 } }
@@ -368,5 +370,18 @@ test('"clear cue" empties the queue', { timeoutMs: 20_000 }, async ($, on) => {
   await $.turn.complete(turn)
   await w.clock.advance(0)
   expect(w.submitted).toEqual([])
+  await $.command.run(talk)
+})
+
+test('/talk model switches the speech recognition model and rejects unknown names', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  const bad = await $.command.run({ ...talk, args: 'model huge' })
+  expect(JSON.stringify(bad)).toContain('Usage')
+  await $.command.run({ ...talk, args: 'model small' })
+  await w.clock.advance(0)
+  expect(w.models).toEqual(['small'])
+  expect(w.spoken).toContain('Switched to the small model.')
   await $.command.run(talk)
 })
