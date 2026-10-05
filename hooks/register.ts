@@ -22,6 +22,12 @@ function fallbackSpoken(answer: string) {
   return prose.trim().slice(0, 500)
 }
 
+async function speak($: EngineInterface, text: string) {
+  const r = await $.process.run([`${$.plugin.root}/speak.sh`, text], { timeoutMs: 120_000 }).catch(() => undefined)
+  if (r && (r.exitCode === 0 || r.exitCode > 128)) return
+  await $.audio.speak(text).catch(() => {})
+}
+
 function stopRecording($: EngineInterface) {
   listenId++
   void $.process.run(['pkill', '-f', 'claude-voice-talk']).catch(() => {})
@@ -50,8 +56,9 @@ async function listen($: EngineInterface) {
 
   if (!heard || DISCARD.test(heard)) return listen($)
   if (STOP.test(heard)) {
-    turnOff($)
-    await $.audio.speak('Voice mode off.')
+    isActive = false
+    $.ui.status(undefined)
+    await speak($, 'Voice mode off.')
     return
   }
   $.ui.status('voice: working')
@@ -64,8 +71,9 @@ async function respond($: EngineInterface, answer: string) {
   if (!isActive) return
   const spoken = forked.isAnswered ? forked.text.trim() : fallbackSpoken(answer)
   $.ui.status('voice: speaking')
-  await $.audio.speak(spoken.slice(0, 4000)).catch(() => {})
-  if (isActive) await listen($)
+  const id = listenId
+  await speak($, spoken.slice(0, 4000))
+  if (isActive && id === listenId) await listen($)
 }
 
 export const register: Register = on => {
@@ -85,8 +93,9 @@ export const register: Register = on => {
     isActive = true
     $.clock.after(0, () => {
       void (async () => {
-        await $.audio.speak('Voice mode on. Go ahead.').catch(() => {})
-        if (isActive) await listen($)
+        const id = listenId
+        await speak($, 'Voice mode on. Go ahead.')
+        if (isActive && id === listenId) await listen($)
       })()
     })
     return { text: 'Voice mode on. Say "stop listening" or run /talk again to end it.' }
