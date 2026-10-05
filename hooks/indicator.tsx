@@ -7,9 +7,9 @@ const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 
 const LOOK: Record<VoicePhase, { label: string; hint: string; color: string; isWave: boolean }> = {
   loading: { label: 'Loading voice models', hint: 'about 10 seconds', color: 'magenta', isWave: false },
-  listening: { label: 'Listening', hint: 'pause to send', color: 'green', isWave: true },
+  listening: { label: 'Listening', hint: 'pause to send · "never mind" drops it', color: 'green', isWave: true },
   speaking: { label: 'Speaking', hint: 'talk to interrupt', color: 'cyan', isWave: true },
-  working: { label: 'Working', hint: 'talk any time', color: 'magenta', isWave: false },
+  working: { label: 'Working', hint: 'talk any time · "stop" ends the work', color: 'magenta', isWave: false },
   preparing: { label: 'Preparing reply', hint: '', color: 'magenta', isWave: false },
 }
 
@@ -32,6 +32,7 @@ const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string;
   const frame = surface.state ?? 0
   const look = LOOK[props.phase]
   const glyph = look.isWave ? wave(frame) : SPINNER[frame % SPINNER.length]
+  const hint = props.queue.length > 0 ? '"send now" · "cancel" · "clear queue" · "stop"' : look.hint
 
   const tail = (text: string) => (text.length > 400 ? `…${text.slice(-400)}` : text)
 
@@ -42,7 +43,7 @@ const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string;
           <Text color={look.color}>{glyph} </Text>
           <Text color={look.color} bold>{look.label}</Text>
         </Box>
-        {look.hint ? <Text dimColor>{look.hint}</Text> : null}
+        {hint ? <Text dimColor>{hint}</Text> : null}
       </Box>
       {props.reply ? (
         <Box marginTop={1}>
@@ -58,7 +59,7 @@ const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string;
       ) : null}
       {props.queue.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>Waiting for Claude's next step · say "send now", "cancel" or "clear queue"</Text>
+          <Text dimColor>Waiting for Claude's next step</Text>
           {props.queue.map((item, i) => (
             <Text key={`q${i}`}>
               {i + 1}. {item}
