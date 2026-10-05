@@ -2,7 +2,7 @@
 
 Hands-free voice mode for Claude Code on macOS.
 
-Type `/talk` once. After that you talk to Claude and it talks back. When a request needs work, Claude first says its plan ("Plan: run the tests, then push."). When the turn ends, it says what it did ("Done: all tests passed and it is pushed."), then listens for your answer. You don't press anything.
+Type `/talk` once. After that you just talk. Claude answers out loud, and the words it speaks also show in a box above the prompt. You can talk at any time: while Claude is working, your words are passed to it mid-task; while it is speaking, it stops and listens. You don't press anything.
 
 ## Install
 
@@ -30,25 +30,27 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and th
 | Action | How |
 |---|---|
 | Start | Type `/talk` |
-| Send what you said | Pause for 3 seconds, or end with "go ahead" |
+| Say something | Just talk. Pause for 3 seconds, or end with "go ahead", to send it. |
+| Add something while Claude works | Just talk. Claude gets it after its next step; if the turn ends first, it is sent as your next prompt. |
+| Interrupt Claude's speech | Start talking. It stops right away. |
 | Discard what you just said | Say "never mind" |
-| Answer by typing instead | Type a prompt. Speech or recording stops, and the next reply is still spoken. |
-| Pause | Press Esc during a turn. Type `/talk` to resume. |
-| Stop | Type `/talk` again |
+| Type instead | Type a prompt. Speech stops; voice mode stays on. |
+| Stop Claude's work | Press Esc. Voice mode stays on. |
+| Stop voice mode | Type `/talk` again |
 
-Voice mode also turns off after 3 minutes with no speech.
+Use headphones. With speakers, the microphone hears Claude's voice and can mistake it for you interrupting. If you use speakers, raise `NO_HANDS_BARGE`.
 
-An animated indicator above the prompt shows what it is doing: a green wave while listening, with your words appearing as you say them; a cyan wave while speaking; and a spinner while Claude is working.
+Above the prompt, a box shows the last thing Claude said, and a line under it shows what is happening: a green wave while listening, with your words as you say them; a cyan wave while Claude speaks; a spinner while it works.
 
 ## How it works
 
-`voiced.py` is a small local server that keeps both speech models loaded. `/talk` starts it through the `voiced` launcher, and the mod talks to it over a Unix socket. It quits when voice mode turns off, or after 15 minutes with no requests.
+`voiced.py` is a small local server that keeps both speech models loaded and the microphone open. `/talk` starts it through the `voiced` launcher, and the mod talks to it over a Unix socket. It quits when voice mode turns off, or after 15 minutes with no connection.
 
-1. **Listen.** The server plays a tone and records from the default microphone. Recording starts when sound goes above 3% volume and ends after 3 seconds below it, or as soon as you say "go ahead". About once a second, Whisper large-v3-turbo transcribes what you have said so far, and the indicator shows it.
-2. **Submit.** The final transcript is submitted as your prompt. Transcripts with no words in them, which Whisper produces from background noise, are ignored.
-3. **First reply.** While voice mode is on, the mod adds one paragraph to the system prompt asking Claude to start with one sentence beginning "Plan:", under 12 words. The mod speaks that sentence as soon as Claude makes its first tool call.
-4. **Last reply.** When the turn ends, the mod sends a copy of the conversation, with the same model, one extra request: say "Done:" plus what was done and the result in one or two short sentences, or just the answer for a question, and end with a question only when a decision is needed. Most of that request is served from the prompt cache. The reply on screen is unchanged.
-5. **Speak.** Kokoro, an 82-million-parameter text-to-speech model, turns the whole reply into audio in one pass, so the pacing carries across sentences, and plays it. Two sentences take about 0.3 seconds to generate. If the server cannot speak, the macOS `say` voice reads it instead.
+1. **Listen.** Speech starts when sound goes above 3% volume and ends after 3 seconds below it, or as soon as you say "go ahead". About once a second, Whisper large-v3-turbo transcribes what you have said so far, and the indicator shows it. Segments Whisper rates as likely not speech, and transcripts with no words, are dropped.
+2. **Send.** If Claude is idle, your words are submitted as your prompt. If it is working, they are added to the next tool result as a note from you, which Claude reads mid-task.
+3. **Heads-up and updates.** While voice mode is on, the mod adds one paragraph to the system prompt asking Claude to talk like a colleague: answer directly, give a one-sentence heads-up before tool work, and mention only what is worth knowing during long work. The mod speaks the heads-up at the first tool call, and later notes at most every 20 seconds.
+4. **Reply.** A short plain answer is spoken as written. A longer one is rewritten for speech first: the mod sends a copy of the conversation, with the same model, asking for the result and anything you need to know in one to three sentences. Most of that request is served from the prompt cache. The reply on screen is unchanged.
+5. **Speak.** Kokoro, an 82-million-parameter text-to-speech model, turns the whole reply into audio in one pass and plays it. Two sentences take about 0.3 seconds to generate. Speech waits while you are talking, and stops if you start. If the server cannot speak, the macOS `say` voice reads it instead.
 
 No audio leaves the machine.
 
@@ -62,6 +64,7 @@ Set these in your shell profile, then restart Claude Code:
 | `NO_HANDS_SPEED` | `1.0` | Speaking rate. `1.2` is 20% faster. |
 | `NO_HANDS_PAUSE` | `3.0` | Seconds of silence that send what you said. |
 | `NO_HANDS_LEVEL` | `0.03` | Volume, from 0 to 1, that counts as speech. Raise it in a loud room. |
+| `NO_HANDS_BARGE` | twice `NO_HANDS_LEVEL` | Volume that counts as you interrupting while Claude speaks. Raise it if you use speakers. |
 
 The full voice list is on the [Kokoro model page](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md).
 
@@ -86,7 +89,7 @@ The server log is at `$TMPDIR/no-hands-voiced.log`.
 ## Known limits
 
 - English only. To change it, edit `language="en"` in `voiced.py`.
-- With speakers instead of headphones, keep the volume moderate. Recording starts only after speaking ends, so the Mac's own voice is not recorded.
+- There is no echo cancellation. With speakers, Claude's own voice can trigger an interruption.
 - Claude Code mods are an early-access feature, and the API may change between Claude Code releases.
 
 ## License

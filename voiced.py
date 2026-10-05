@@ -16,7 +16,6 @@ import queue
 import re
 import socket
 import socketserver
-import subprocess
 import sys
 import threading
 import time
@@ -37,17 +36,20 @@ VOICE = os.environ.get("NO_HANDS_VOICE", "af_heart")
 SPEED = float(os.environ.get("NO_HANDS_SPEED", "1.0"))
 PAUSE = float(os.environ.get("NO_HANDS_PAUSE", "3.0"))
 LEVEL = float(os.environ.get("NO_HANDS_LEVEL", "0.03"))
-WAIT_LIMIT = 180
+BARGE = float(os.environ.get("NO_HANDS_BARGE", str(LEVEL * 2)))
+HEARTBEAT = 5
 MAX_TURN = 120
 PARTIAL_EVERY = 1.0
 NO_SPEECH = 0.5
-TONE = "/System/Library/Sounds/Tink.aiff"
 GO_AHEAD = re.compile(r"[\s,.]*\bgo ahead\W*$", re.I)
 
 IDLE_LIMIT = 15 * 60
 
 jobs: queue.Queue = queue.Queue()
 stop = threading.Event()
+barge = threading.Event()
+playing = threading.Event()
+user_talking = threading.Event()
 last_used = [time.monotonic()]
 busy = [0]
 
@@ -94,84 +96,104 @@ def synthesize(text: str):
 
 
 def speak(text: str) -> str:
+    deadline = time.monotonic() + 60
+    while user_talking.is_set() and time.monotonic() < deadline:
+        time.sleep(0.05)
     stop.clear()
-    for clip in on_model_thread(synthesize, " ".join(text.split())):
-        if stop.is_set():
-            break
-        sd.play(clip, tts.sample_rate)
-        while sd.get_stream().active:
-            if stop.is_set():
-                sd.stop()
-                break
-            time.sleep(0.03)
-    return "stopped" if stop.is_set() else "done"
+    barge.clear()
+    clips = on_model_thread(synthesize, " ".join(text.split()))
+    if user_talking.is_set() or stop.is_set():
+        return "interrupted"
+    playing.set()
+    try:
+        for clip in clips:
+            sd.play(clip, tts.sample_rate)
+            while sd.get_stream().active:
+                if stop.is_set() or barge.is_set():
+                    sd.stop()
+                    return "interrupted"
+                time.sleep(0.03)
+    finally:
+        playing.clear()
+    return "done"
 
 
 def listen(send):
-    stop.clear()
-    subprocess.run(["afplay", TONE])
     blocks: queue.Queue = queue.Queue()
     size = int(RATE * BLOCK)
 
     def on_audio(data, frames, when, status):
         blocks.put(data[:, 0].copy())
 
-    before = collections.deque(maxlen=3)
-    heard: list[np.ndarray] = []
-    waited = quiet = 0.0
-    partial: list[Future | None] = [None]
-    last_partial = 0.0
-    is_finishing = threading.Event()
-    is_go_ahead = threading.Event()
+    def utterance():
+        before = collections.deque(maxlen=3)
+        heard: list[np.ndarray] = []
+        quiet = 0.0
+        last_beat = last_partial = time.monotonic()
+        partial: list[Future | None] = [None]
+        is_finishing = threading.Event()
+        is_go_ahead = threading.Event()
 
-    def start_partial(audio):
-        done: Future = Future()
-        partial[0] = done
+        def start_partial(audio):
+            done: Future = Future()
+            partial[0] = done
 
-        def run():
-            try:
-                text = on_model_thread(transcribe, audio)
-                if GO_AHEAD.search(text):
-                    is_go_ahead.set()
-                if not stop.is_set() and not is_finishing.is_set():
-                    send({"partial": GO_AHEAD.sub("", text)})
-            finally:
-                done.set_result(None)
+            def run():
+                try:
+                    text = on_model_thread(transcribe, audio)
+                    if GO_AHEAD.search(text):
+                        is_go_ahead.set()
+                    if not is_finishing.is_set():
+                        send({"partial": GO_AHEAD.sub("", text)})
+                finally:
+                    done.set_result(None)
 
-        threading.Thread(target=run, daemon=True).start()
+            threading.Thread(target=run, daemon=True).start()
 
-    with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=size, callback=on_audio):
         while True:
-            if stop.is_set():
-                return send({"stopped": True})
             try:
                 block = blocks.get(timeout=0.5)
             except queue.Empty:
+                block = None
+            now = time.monotonic()
+            if now - last_beat >= HEARTBEAT:
+                last_beat = now
+                send({"beat": True})
+            if block is None:
                 continue
-            is_loud = float(np.abs(block).max()) > LEVEL
+            level = float(np.abs(block).max())
+            is_loud = level > (BARGE if playing.is_set() else LEVEL)
             if not heard:
                 before.append(block)
-                waited += BLOCK
                 if is_loud:
                     heard.extend(before)
-                elif waited > WAIT_LIMIT:
-                    return send({"timeout": True})
+                    user_talking.set()
+                    barge.set()
+                    send({"start": True})
                 continue
             heard.append(block)
-            quiet = 0.0 if is_loud else quiet + BLOCK
+            quiet = 0.0 if level > LEVEL else quiet + BLOCK
             if quiet >= PAUSE or is_go_ahead.is_set() or len(heard) * BLOCK >= MAX_TURN:
                 break
-            now = time.monotonic()
             busy = partial[0] is not None and not partial[0].done()
             if now - last_partial >= PARTIAL_EVERY and not busy:
                 last_partial = now
                 start_partial(np.concatenate(heard))
 
-    is_finishing.set()
-    send({"transcribing": True})
-    if partial[0] is not None:
-        partial[0].result()
-    send({"final": GO_AHEAD.sub("", on_model_thread(transcribe, np.concatenate(heard)))})
+        is_finishing.set()
+        if partial[0] is not None:
+            partial[0].result()
+        text = GO_AHEAD.sub("", on_model_thread(transcribe, np.concatenate(heard)))
+        send({"final": text})
+        user_talking.clear()
+
+    with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=size, callback=on_audio):
+        send({"ready": True})
+        try:
+            while True:
+                utterance()
+        except ConnectionError:
+            user_talking.clear()
 
 
 def quit_when_idle():
@@ -215,13 +237,16 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     self.wfile.write((json.dumps(msg) + "\n").encode())
                     self.wfile.flush()
-                except OSError:
-                    stop.set()
+                except OSError as e:
+                    raise ConnectionError from e
 
         try:
             listen(send)
         except Exception as e:
-            send({"error": str(e)})
+            try:
+                send({"error": str(e)})
+            except ConnectionError:
+                pass
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
