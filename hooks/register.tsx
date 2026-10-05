@@ -7,6 +7,7 @@ const phase = atom({ plugin: 'no-hands', key: 'phase' } as const, null)
 const words = atom({ plugin: 'no-hands', key: 'words' } as const, '')
 const reply = atom({ plugin: 'no-hands', key: 'reply' } as const, '')
 const queue = atom({ plugin: 'no-hands', key: 'queue' } as const, [] as string[])
+const sent = atom({ plugin: 'no-hands', key: 'sent' } as const, '')
 
 const VOICE_SECTION =
   'Voice mode is on: the user is talking with you out loud and hears your text read aloud. ' +
@@ -25,6 +26,17 @@ const SPOKEN_PROMPT =
   'Skip what I already know: do not restate my request, list steps, or read out code, file paths, URLs or numbers I do not need. ' +
   'Usually one to three sentences; more only if I asked for an explanation. No labels, no lists, no filler. ' +
   'Ask a question only if you need a decision from me. Output only the words to speak.'
+
+const ASIDE = /\?\s*$|^\W*(by the way|btw|quick question)\b/i
+
+function asidePrompt(question: string) {
+  return (
+    `I asked this out loud while you were working: "${question}". ` +
+    'If it is a question you can answer from what you already know in this conversation, answer it ' +
+    'in one to three short spoken sentences, plain words, no code, file paths or lists. ' +
+    'If it is an instruction or a change to the current work rather than a question, reply with exactly QUEUE.'
+  )
+}
 
 const UPDATE_GAP_MS = 20_000
 const SHORT_ANSWER = 300
@@ -140,7 +152,19 @@ function turnOff($: EngineInterface, why?: string) {
   refresh($)
   hear($, '')
   showReply($, '')
+  showSent($, '')
   if (why) $.ui.toast(why)
+}
+
+function showSent($: EngineInterface, text: string) {
+  void update($, sent, () => text)
+}
+
+function submit($: EngineInterface, text: string) {
+  showSent($, text)
+  isWorking = true
+  refresh($)
+  void $.prompt.submit({ text, asUser: true })
 }
 
 function showQueue($: EngineInterface) {
@@ -169,10 +193,7 @@ async function control($: EngineInterface, text: string) {
   if (SEND_NOW.test(text)) {
     if (pending.length === 0) return true
     await stopWork($)
-    const queued = takePending($)
-    isWorking = true
-    refresh($)
-    void $.prompt.submit({ text: queued, asUser: true })
+    submit($, takePending($))
     return true
   }
   if (STOP.test(text)) {
@@ -183,18 +204,31 @@ async function control($: EngineInterface, text: string) {
   return false
 }
 
+async function aside($: EngineInterface, question: string) {
+  showSent($, `(on the side) ${question}`)
+  hear($, `Asking on the side: ${question}`)
+  const r = await $.model.fork({ prompt: asidePrompt(question) }).catch(() => undefined)
+  hear($, '')
+  const answer = r?.isAnswered ? r.text.trim() : ''
+  if (!answer || /^QUEUE\W*$/.test(answer)) {
+    pending.push(question)
+    showQueue($)
+    return
+  }
+  void speak($, answer)
+}
+
 async function onHeard($: EngineInterface, text: string) {
   hear($, '')
   if (!/[a-z0-9]/i.test(text) || DISCARD.test(text)) return
   if (await control($, text)) return
+  if (isWorking && ASIDE.test(text)) return aside($, text)
   if (isWorking) {
     pending.push(text)
     showQueue($)
     return
   }
-  isWorking = true
-  refresh($)
-  void $.prompt.submit({ text, asUser: true })
+  submit($, text)
 }
 
 async function converse($: EngineInterface) {
@@ -247,10 +281,7 @@ async function start($: EngineInterface, id: number) {
 
 async function respond($: EngineInterface, answer: string) {
   if (pending.length > 0) {
-    const text = takePending($)
-    isWorking = true
-    refresh($)
-    void $.prompt.submit({ text, asUser: true })
+    submit($, takePending($))
     return
   }
   let spoken = answer.trim()
@@ -338,6 +369,7 @@ export const register: Register = on => {
     const result = await next(e)
     if (!isActive || e.agentId !== undefined || pending.length === 0 || result.deny !== undefined) return result
     const text = takePending($)
+    showSent($, text)
     const note = `The user just said this out loud while you were working: "${text}". Treat it as a message from them now.`
     return { ...result, context: [...(result.context ?? []), note] }
   })
@@ -362,13 +394,15 @@ export const register: Register = on => {
     const said = await read($, words)
     const spoken = await read($, reply)
     const waiting = await read($, queue)
+    const lastSent = await read($, sent)
     if (e.surface === 'terminal' || e.surface === 'desktop') {
       const { Client } = $.ui.resolve(e)
-      return <Client key="voice" module="./indicator.tsx" width="100%" props={{ phase: current, words: said, reply: spoken, queue: [...waiting] }} />
+      return <Client key="voice" module="./indicator.tsx" width="100%" props={{ phase: current, words: said, reply: spoken, queue: [...waiting], sent: lastSent }} />
     }
     const { Box, Text } = $.ui.resolve(e)
     return (
       <Box flexDirection="column">
+        {lastSent ? <Text dimColor>Sent: {lastSent}</Text> : null}
         {spoken ? <Text>{spoken}</Text> : null}
         <Text color="green">Voice: {current}</Text>
         {said ? <Text dimColor>{said}</Text> : null}
@@ -383,6 +417,7 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     if (isActive && e.origin.kind === 'composer') {
+      showSent($, e.text)
       silence($)
       isWorking = true
       refresh($)

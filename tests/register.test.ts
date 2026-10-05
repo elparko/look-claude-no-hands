@@ -232,3 +232,26 @@ test('"cancel" removes the last queued item and "send now" stops the turn and se
   expect(w.spoken).toContain('Removed.')
   await $.command.run(talk)
 })
+
+test('a question asked while Claude works is answered on the side, not queued', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, ['what branch are we on?'])
+  await $.command.run(talk)
+  await $.turn.start({ text: 'run the tests', turnId: 't1' } as never)
+  await w.clock.advance(0)
+  expect(w.spoken).toContain('Deploy finished.')
+  expect(w.submitted).toEqual([])
+  await $.command.run(talk)
+})
+
+test('the panel shows the last thing sent to Claude', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, ['check the runner next'])
+  on('ui.render', ($, e) => $.ui.resolve(e).Box({}))
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  const ui = await $.ui.mount({ ...band, surface: 'terminal' })
+  const tree = JSON.stringify(await ui.drawn({ in: 'voice' }))
+  expect(tree).toContain('Sent')
+  expect(tree).toContain('check the runner next')
+  await ui.unmount()
+  await $.command.run(talk)
+})

@@ -31,6 +31,7 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and th
 |---|---|
 | Start | Type `/talk` |
 | Say something | Just talk. Pause for 3 seconds to send it. A short pop plays when it is sent. |
+| Ask a quick question while Claude works | Just ask. A question (or anything starting with "by the way" or "quick question") is answered right away from what Claude already knows, without interrupting the work, like `/btw`. If it is really an instruction, it goes to the queue instead. |
 | Add something while Claude works | Just talk. It waits in a numbered list above the prompt until Claude's next step; if the turn ends first, it is sent as your next prompt. |
 | Ignore more background sound | `/talk level 0.05` (default 0.03). Takes effect at once. |
 | Change the voice | `/talk voice bm_george`. Plays a sample at once. `/talk voice` lists the choices. |
@@ -45,7 +46,7 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and th
 
 Use headphones. With speakers, the microphone hears Claude's voice and can mistake it for you interrupting. If you use speakers, raise `NO_HANDS_BARGE`.
 
-Above the prompt, one panel shows what is happening: a green wave while listening, a cyan wave while Claude speaks, and a spinner while it works. Under that it shows the last thing Claude said, your words as you say them, and anything waiting for Claude. The border color follows the state.
+Above the prompt, one panel shows what is happening: a green wave while listening, a cyan wave while Claude speaks, and a spinner while it works. Under that it shows the last thing Claude received (Sent), Claude's reply to it, your words as you say them (Hearing), and anything waiting for Claude. The border color follows the state.
 
 ## How it works
 

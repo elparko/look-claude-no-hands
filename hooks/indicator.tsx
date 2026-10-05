@@ -22,7 +22,7 @@ function wave(frame: number) {
   return out
 }
 
-const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string; queue: string[] }, number> = (props, surface) => {
+const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string; queue: string[]; sent: string }, number> = (props, surface) => {
   if (surface.state === undefined) {
     let frame = 0
     surface.setState(0)
@@ -34,6 +34,7 @@ const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string;
   const queue = props.queue ?? []
   const words = props.words ?? ''
   const reply = props.reply ?? ''
+  const sent = props.sent ?? ''
   const glyph = look.isWave ? wave(frame) : SPINNER[frame % SPINNER.length]
   const hint = queue.length > 0 ? '"send now" · "cancel" · "clear queue" · "stop"' : look.hint
 
@@ -48,15 +49,21 @@ const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string;
         </Box>
         {hint ? <Text dimColor>{hint}</Text> : null}
       </Box>
-      {reply ? (
+      {sent ? (
         <Box marginTop={1}>
+          <Text color="green" bold>Sent    </Text>
+          <Text dimColor>{tail(sent)}</Text>
+        </Box>
+      ) : null}
+      {reply ? (
+        <Box marginTop={sent ? 0 : 1}>
           <Text color="cyan" bold>Claude  </Text>
           <Text>{tail(reply)}</Text>
         </Box>
       ) : null}
       {words ? (
         <Box marginTop={1}>
-          <Text color="green" bold>You     </Text>
+          <Text color="green" bold>Hearing </Text>
           <Text italic>{tail(words)}</Text>
         </Box>
       ) : null}
