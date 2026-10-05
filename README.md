@@ -33,6 +33,7 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and th
 | Say something | Just talk. Pause for 3 seconds to send it. A short pop plays when it is sent. |
 | Add something while Claude works | Just talk. It waits in a numbered list above the prompt until Claude's next step; if the turn ends first, it is sent as your next prompt. |
 | Ignore more background sound | `/talk level 0.05` (default 0.03). Takes effect at once. |
+| Change the voice | `/talk voice bm_george`. Plays a sample at once. `/talk voice` lists the choices. |
 | Interrupt Claude's speech | Start talking. It stops right away. |
 | Discard what you just said | Say "never mind" |
 | Type instead | Type a prompt. Speech stops; voice mode stays on. |
@@ -57,7 +58,7 @@ No audio leaves the machine.
 
 ## Settings
 
-Set these in your shell profile, then restart Claude Code:
+`/talk voice` and `/talk level` change these for the current session. To keep a choice, set it in your shell profile and restart Claude Code:
 
 | Variable | Default | Meaning |
 |---|---|---|

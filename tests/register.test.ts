@@ -193,3 +193,16 @@ test('/talk level sets the mic level and rejects bad values', async ($, on) => {
   const good = await $.command.run({ ...talk, args: 'level 0.06' })
   expect(JSON.stringify(good)).toContain('0.06')
 })
+
+test('/talk voice switches the voice and plays a sample', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  w.spoken.length = 0
+  const bad = await $.command.run({ ...talk, args: 'voice robot' })
+  expect(JSON.stringify(bad)).toContain('am_michael')
+  await $.command.run({ ...talk, args: 'voice bm_george' })
+  await w.clock.advance(0)
+  expect(w.spoken).toEqual(['This is how I sound now.'])
+  await $.command.run(talk)
+})

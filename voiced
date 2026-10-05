@@ -5,7 +5,11 @@ sock=$1
 log=${TMPDIR:-/tmp}/no-hands-voiced.log
 up() { curl -s -m 2 --unix-socket $sock http://voice/health >/dev/null }
 
-up && exit 0
+if up; then
+  [[ $here/voiced.py -nt $sock ]] || exit 0
+  curl -s -m 2 --unix-socket $sock -X POST http://voice/quit >/dev/null
+  sleep 1
+fi
 nohup uv run --quiet --script $here/voiced.py $sock >$log 2>&1 &
 server=$!
 for i in {1..600}; do

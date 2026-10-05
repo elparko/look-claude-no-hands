@@ -33,7 +33,7 @@ RATE = 16000
 BLOCK = 0.1
 WHISPER = "mlx-community/whisper-large-v3-turbo"
 KOKORO = "mlx-community/Kokoro-82M-bf16"
-VOICE = os.environ.get("NO_HANDS_VOICE", "af_heart")
+voice = {"name": os.environ.get("NO_HANDS_VOICE", "af_heart")}
 SPEED = float(os.environ.get("NO_HANDS_SPEED", "1.0"))
 PAUSE = float(os.environ.get("NO_HANDS_PAUSE", "3.0"))
 level = {"speech": float(os.environ.get("NO_HANDS_LEVEL", "0.03"))}
@@ -72,7 +72,7 @@ def model_thread(ready: threading.Event):
     try:
         tts = load_model(KOKORO)
         whisper = mlx_whisper
-        list(tts.generate(text="Ready.", voice=VOICE, lang_code=VOICE[0]))
+        list(tts.generate(text="Ready.", voice=voice["name"], lang_code=voice["name"][0]))
         whisper.transcribe(np.zeros(RATE, dtype=np.float32), path_or_hf_repo=WHISPER, language="en")
     except Exception as e:
         print(f"failed: {e}", flush=True)
@@ -101,7 +101,8 @@ def transcribe(audio: np.ndarray) -> str:
 
 
 def synthesize(text: str):
-    segments = tts.generate(text=text, voice=VOICE, speed=SPEED, lang_code=VOICE[0])
+    name = voice["name"]
+    segments = tts.generate(text=text, voice=name, speed=SPEED, lang_code=name[0])
     return [np.array(s.audio, dtype=np.float32) for s in segments]
 
 
@@ -267,6 +268,9 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length).decode()
         if self.path == "/speak":
             return self.reply(speak(body))
+        if self.path == "/voice":
+            voice["name"] = body.strip()
+            return self.reply("ok")
         if self.path == "/level":
             level["speech"] = float(body)
             level["barge"] = level["speech"] * 2

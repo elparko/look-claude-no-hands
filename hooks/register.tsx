@@ -42,6 +42,12 @@ let sessionId = 0
 let lastSpokenAt = 0
 let pending: string[] = []
 let micLevel: string | undefined
+let voiceName: string | undefined
+
+const VOICES =
+  'American women: af_heart (default), af_bella, af_nicole, af_sarah, af_nova, af_sky. ' +
+  'American men: am_michael, am_fenrir, am_puck, am_eric, am_liam, am_adam. ' +
+  'British women: bf_emma, bf_isabella, bf_alice, bf_lily. British men: bm_george, bm_fable, bm_lewis, bm_daniel.'
 let speech: Promise<void> = Promise.resolve()
 
 function socket($: EngineInterface) {
@@ -181,7 +187,10 @@ async function converse($: EngineInterface) {
 async function start($: EngineInterface) {
   refresh($)
   void update($, phase, () => 'loading')
-  const env: Record<string, string> = micLevel ? { NO_HANDS_LEVEL: micLevel } : {}
+  const env: Record<string, string> = {
+    ...(micLevel ? { NO_HANDS_LEVEL: micLevel } : {}),
+    ...(voiceName ? { NO_HANDS_VOICE: voiceName } : {}),
+  }
   const r = await $.process.run([`${$.plugin.root}/voiced`, socket($)], { env, timeoutMs: 600_000 }).catch(() => undefined)
   if (!isActive) return
   if (r?.exitCode !== 0) return turnOff($, `Voice mode off: the voice server did not start. ${r?.stdout.trim() ?? ''}`)
@@ -227,6 +236,15 @@ export const register: Register = on => {
       micLevel = value
       if (isActive) await call($, '/level', value)
       return { text: `Mic level set to ${value}. Sound below it is ignored.` }
+    }
+    if (word === 'voice') {
+      if (!value || !/^[ab][fm]_[a-z]+$/.test(value)) return { text: `Usage: /talk voice am_michael. ${VOICES}` }
+      voiceName = value
+      if (isActive) {
+        await call($, '/voice', value)
+        void speak($, 'This is how I sound now.')
+      }
+      return { text: `Voice set to ${value}.` }
     }
     if (isActive) {
       turnOff($)
