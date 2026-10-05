@@ -361,6 +361,23 @@ test('"stop" alone stops the main work, not an agent', { timeoutMs: 20_000 }, as
   await $.command.run(talk)
 })
 
+for (const phrase of ['Pause.', 'Okay, hold on.', 'Wait, stop.']) {
+  test(`"${phrase}" stops the main work`, { timeoutMs: 20_000 }, async ($, on) => {
+    const aborted: string[] = []
+    on('turn.abort', (_$, e) => {
+      aborted.push(e.turnId)
+      return { value: undefined }
+    })
+    const w = world(on, [phrase])
+    await $.turn.start({ text: 'run the tests', turnId: 't1' } as never)
+    await $.command.run(talk)
+    await w.clock.advance(0)
+    expect(aborted).toEqual(['t1'])
+    expect(w.spoken).toContain('Stopped.')
+    await $.command.run(talk)
+  })
+}
+
 test('"stop" with words from an agent\'s task does not stop that agent', { timeoutMs: 20_000 }, async ($, on) => {
   const stopped: string[] = []
   on('tool.call', (_$, e) => {
@@ -452,6 +469,22 @@ test('a spoken slash command is read back and runs after an okay', { timeoutMs: 
   expect(w.spoken).toContain('Run goal with: finish the tests. Okay?')
   expect(w.spoken).toContain('Dropped.')
   expect(w.submitted).toEqual(['Slash the budget in half.'])
+  await $.command.run(talk)
+})
+
+test('a pending slash command drops on any reply that starts with no, cancel, or stop', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: string[] = []
+  on('command.list', () => ({ value: [{ name: 'goal', description: '', source: 'builtin' }] }) as never)
+  on('command.run', (_$, e) => {
+    ran.push(`${e.command}|${e.args}`)
+    return { text: 'ok' }
+  })
+  const w = world(on, ['Slash goal.', 'No, I do not want that.', 'Slash goal finish it.', 'Okay, cancel the command.', 'Slash goal.', 'Stop.', 'Fix the tests.'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(ran).toEqual([])
+  expect(w.spoken.filter(t => t === 'Dropped.').length).toBe(3)
+  expect(w.submitted).toEqual(['Fix the tests.'])
   await $.command.run(talk)
 })
 

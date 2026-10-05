@@ -46,7 +46,7 @@ const DISCARD = /^\W*never ?mind\W*$/i
 const CANCEL = /^\W*(cancel( that)?|scratch that)\W*$/i
 const CLEAR = /^\W*clear( the)? (queue|cue|q)\W*$/i
 const SEND_NOW = /^\W*(send (it |that )?now|next)\W*$/i
-const STOP = /^\W*stop( working)?\W*$/i
+const STOP = /^\W*(?:(?:okay|ok|hey|claude)\W+)*(?:stop|pause|hold on|hold up|wait)(?:\W+(?:stop|pause|wait|it|that|working|claude|a sec(?:ond)?|a minute))*\W*$/i
 const AGENT_STATUS = /^\W*(agent status|status|what are (the )?agents doing|how are (the )?agents doing)\W*$/i
 const AGENT_TELL = /^\W*(?:tell|ask|message)\s+(.+?)(?:\s+to\s+|\s+that\s+|,\s*|:\s*|\s+(?=(?:what|whether|if|how|why|when|where|which)\b))(.+)$/i
 const AGENT_STOP = /^\W*(?:stop|kill|cancel)\s+(.+?)\W*$/i
@@ -54,7 +54,7 @@ const FINISH_GAP_MS = 4_000
 const SLASH = /(?:\bslash\s+|(?:^|\s)\/(?=\w))(.+)$/i
 const FILLER = /^\W*(?:(?:okay|ok|so|alright|um|uh|and|then)\b\W*)+/i
 const YES = /^\W*(yes|yeah|yep|yup|sure|ok(ay)?|go( ahead)?|do it|start( it)?|run it|(we('re)? )?good|sounds good|correct|right)\W*$/i
-const NO = /^\W*(no|nope|cancel( it)?|drop it|don'?t|never ?mind)\W*$/i
+const NO = /^\W*(?:(?:okay|ok|so|um|uh|oh)\W+)*(?:no|nope|cancel|drop|stop|forget|scratch|never ?mind|don'?t)\b/i
 
 const NUMBERS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
 const SOUNDS_LIKE: Record<string, number> = { won: 1, to: 2, too: 2, tree: 3, for: 4, fore: 4, ate: 8 }
@@ -608,6 +608,7 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     turnId = e.turnId
+    pendingCommand = undefined
     isWorking = true
     if (isActive) {
       showReply($, '')
