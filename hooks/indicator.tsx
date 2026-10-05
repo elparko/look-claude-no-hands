@@ -32,8 +32,8 @@ const Indicator: ClientModule<{ phase: VoicePhase; words: string; reply: string;
   const frame = surface.state ?? 0
   const look = LOOK[props.phase] ?? LOOK.listening
   const queue = props.queue ?? []
-  const words = words ?? ''
-  const reply = reply ?? ''
+  const words = props.words ?? ''
+  const reply = props.reply ?? ''
   const glyph = look.isWave ? wave(frame) : SPINNER[frame % SPINNER.length]
   const hint = queue.length > 0 ? '"send now" · "cancel" · "clear queue" · "stop"' : look.hint
 
