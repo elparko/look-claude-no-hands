@@ -40,6 +40,7 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and tw
 | Remove the last queued item | Say "cancel" or "scratch that" |
 | Empty the queue | Say "clear queue" |
 | Run a slash command | Say "slash" and the command anywhere in a sentence, like "slash code review high" or "finish the audit fixes, slash goal". Claude reads it back ("Run goal with: finish the audit fixes. Okay?") and runs it when you say "yes" or "go ahead". To drop it, say anything that starts with "no", "cancel", "stop", "forget it", or "never mind", or type a prompt. With no answer for 30 seconds, it drops on its own. If you said only "slash goal", it asks what the goal should be first. |
+| Use the panel buttons | The top of the panel shows **Mic on / Mic muted** and **Sound on / Deafened**; click either to toggle it. **Stop** shows while Claude works, **Send now** when words are queued, **Next session** when another session is waiting, **Clear** and **Stop** beside a goal or loop, and **Voice off** always. |
 | Mute | Say "mute" or type `/talk mute`. Claude keeps talking but ignores what you say, except "unmute". |
 | Deafen | Say "deafen" or type `/talk deafen`. Claude also stops talking; its replies stay on screen. |
 | Unmute | Say "unmute" or type `/talk unmute`. It ends mute and deafen. While muted, the mic stays open and speech is still transcribed on your Mac so "unmute" can be heard; nothing else is acted on. |

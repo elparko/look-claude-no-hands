@@ -67,6 +67,7 @@ const CONFIRM_MS = 30_000
 const NEXT_SESSION = /^\W*(?:(?:okay|ok|so)\W+)*(?:next(?: session| one)?|skip(?: it| this| that)?)\W*$/i
 const SWITCH = /^\W*(?:(?:okay|ok|so)\W+)*(?:switch|go|go back|back|talk|move)\s+(?:over\s+)?to\s+(.+?)\W*$/i
 const WAITING = /^\W*(?:(?:what|who)(?:'s| is) waiting|(?:list (?:the )?)?sessions|session status)\W*$/i
+const BUTTON_SAYS = { stop: 'stop', send: 'send now', next: 'next', goal: 'clear goal', loop: 'stop loop' }
 const RANK_WORD: Record<number, string> = { 3: 'a question', 2: 'a problem', 1: 'a result' }
 const MUTE = /^\W*(?:(?:okay|ok|hey|claude)\W+)*(mute|deafen)(?:\W+(?:me|mic|the mic|yourself|everything))?\W*$/i
 const UNMUTE = /^\W*(?:(?:okay|ok|hey|claude)\W+)*un[\s-]?(?:mute|deafen)(?:\W+(?:me|mic|the mic))?\W*$/i
@@ -740,6 +741,15 @@ export const register: Register = on => {
 
   on('session.append', { door: 'attachment' }, async ($, e, next) => {
     if (e.agentId === undefined && e.message.name === 'goal_status') isGoalChecked = true
+    return next(e)
+  })
+
+  on('ui.message', async ($, e, next) => {
+    const data = e.data as { mute?: MuteState; action?: keyof typeof BUTTON_SAYS | 'off' } | null
+    if (!isActive || !e.module.endsWith('indicator.tsx') || !data) return next(e)
+    if (data.mute !== undefined) setMute($, data.mute)
+    if (data.action === 'off') turnOff($, 'Voice mode off.')
+    else if (data.action) void control($, BUTTON_SAYS[data.action])
     return next(e)
   })
 

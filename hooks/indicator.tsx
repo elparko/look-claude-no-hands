@@ -38,7 +38,7 @@ const Indicator: ClientModule<Props, number> = (props, surface) => {
     surface.setState(0)
     surface.every(90, () => surface.setState(++frame))
   }
-  const { Box, Text } = surface.elements
+  const { Box, Button, Text } = surface.elements
   const frame = surface.state ?? 0
   const look = LOOK[props.phase] ?? LOOK.listening
   const queue = props.queue ?? []
@@ -70,7 +70,24 @@ const Indicator: ClientModule<Props, number> = (props, surface) => {
           <Text color={color}>{glyph} </Text>
           <Text color={color} bold>{label}</Text>
         </Box>
-        {hint ? <Text dimColor>{hint}</Text> : null}
+        <Box>
+          <Text color={mute ? 'yellow' : 'green'}>{mute ? '○ ' : '● '}</Text>
+          <Button key="mic" plain label={mute ? 'Mic muted' : 'Mic on'} onPress={() => surface.post({ mute: mute ? '' : 'muted' })} />
+          <Text>   </Text>
+          <Text color={mute === 'deafened' ? 'red' : 'green'}>{mute === 'deafened' ? '○ ' : '● '}</Text>
+          <Button key="sound" plain label={mute === 'deafened' ? 'Deafened' : 'Sound on'} onPress={() => surface.post({ mute: mute === 'deafened' ? '' : 'deafened' })} />
+        </Box>
+      </Box>
+      <Box justifyContent="space-between">
+        <Box>
+          {props.phase === 'working' ? <Button key="stop" plain label="■ Stop" onPress={() => surface.post({ action: 'stop' })} /> : null}
+          {queue.length > 0 ? <Button key="send" plain label="  ▶ Send now" onPress={() => surface.post({ action: 'send' })} /> : null}
+          {sessions.some(row => !row.floor && (row.state === 'waiting' || row.state === 'asking')) ? <Button key="next" plain label="  ⏭ Next session" onPress={() => surface.post({ action: 'next' })} /> : null}
+        </Box>
+        <Box>
+          {hint ? <Text dimColor>{hint}   </Text> : null}
+          <Button key="off" plain dimColor label="Voice off" onPress={() => surface.post({ action: 'off' })} />
+        </Box>
       </Box>
       {sessions.length > 1 ? (
         <Box marginTop={1}>
@@ -91,14 +108,16 @@ const Indicator: ClientModule<Props, number> = (props, surface) => {
             <Box>
               <Text color="yellow" bold>Goal    </Text>
               <Text wrap="truncate-end">{goal}</Text>
-              <Text dimColor> · say "clear goal"</Text>
+              <Text dimColor> · </Text>
+              <Button key="goal" plain dimColor label="Clear" onPress={() => surface.post({ action: 'goal' })} />
             </Box>
           ) : null}
           {loop ? (
             <Box>
               <Text color="yellow" bold>Loop    </Text>
               <Text wrap="truncate-end">{loop}</Text>
-              <Text dimColor> · say "stop loop"</Text>
+              <Text dimColor> · </Text>
+              <Button key="loop" plain dimColor label="Stop" onPress={() => surface.post({ action: 'loop' })} />
             </Box>
           ) : null}
         </Box>

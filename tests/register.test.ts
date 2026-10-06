@@ -688,6 +688,46 @@ test('mute set in another session applies here', { timeoutMs: 20_000 }, async ($
   await $.command.run(talk)
 })
 
+async function panel($: Parameters<Parameters<typeof test>[2]>[0]) {
+  return $.ui.mount({ plugin: 'no-hands', surface: 'terminal', component: 'AbovePrompt', props: {} as never })
+}
+
+test('panel buttons mute, deafen, and turn voice off', { timeoutMs: 20_000 }, async ($, on) => {
+  const w = world(on, [])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  const ui = await panel($)
+  await ui.press({ key: 'mic', in: 'voice' } as never)
+  await w.clock.advance(0)
+  await ui.press({ key: 'sound', in: 'voice' } as never)
+  await w.clock.advance(0)
+  await ui.press({ key: 'mic', in: 'voice' } as never)
+  await w.clock.advance(0)
+  expect(w.calls).toContain('/mute muted')
+  expect(w.calls).toContain('/mute deafened')
+  expect(w.spoken).toContain('Unmuted.')
+  await ui.press({ key: 'off', in: 'voice' } as never)
+  await w.clock.advance(0)
+  expect(w.toasts).toContain('Voice mode off.')
+})
+
+test('the stop button stops the main work', { timeoutMs: 20_000 }, async ($, on) => {
+  const aborted: string[] = []
+  on('turn.abort', (_$, e) => {
+    aborted.push(e.turnId)
+    return { value: undefined }
+  })
+  const w = world(on, [])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  await $.turn.start({ text: 'run the tests', turnId: 't1' } as never)
+  const ui = await panel($)
+  await ui.press({ key: 'stop', in: 'voice' } as never)
+  await w.clock.advance(0)
+  expect(aborted).toEqual(['t1'])
+  await $.command.run(talk)
+})
+
 test('words queued before "stop" are dropped, not sent with a later turn', { timeoutMs: 20_000 }, async ($, on) => {
   on('turn.abort', () => ({ value: undefined }))
   const w = world(on, ['also check the logs', 'Stop.'])
