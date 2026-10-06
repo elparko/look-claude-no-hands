@@ -461,41 +461,6 @@ test('an agent stopped by voice is not announced again as failed', { timeoutMs: 
   await $.command.run(talk)
 })
 
-test('a spoken slash command is read back and runs after an okay', { timeoutMs: 20_000 }, async ($, on) => {
-  const ran: string[] = []
-  on('command.list', () => ({ value: [{ name: 'compact', description: '', source: 'builtin' }, { name: 'code-review', description: '', source: 'builtin' }, { name: 'goal', description: '', source: 'builtin' }] }) as never)
-  on('command.run', (_$, e) => {
-    ran.push(`${e.command}|${e.args}`)
-    return { text: 'ok' }
-  })
-  const w = world(on, ['Slash code review high.', 'Yes.', 'Okay, slash goal.', 'Finish the audit fixes.', 'Go ahead.', 'Finish the tests, slash goal.', 'No.', 'Slash the budget in half.'])
-  await $.command.run(talk)
-  await w.clock.advance(0)
-  expect(ran).toEqual(['code-review|high', 'goal|Finish the audit fixes'])
-  expect(w.spoken).toContain('Run code review with: high. Okay?')
-  expect(w.spoken).toContain('What should the goal be? Or say "run it" to run it as is.')
-  expect(w.spoken).toContain('Run goal with: finish the tests. Okay?')
-  expect(w.spoken).toContain('Dropped.')
-  expect(w.submitted).toEqual(['Slash the budget in half.'])
-  await $.command.run(talk)
-})
-
-test('a pending slash command drops on any reply that starts with no, cancel, or stop', { timeoutMs: 20_000 }, async ($, on) => {
-  const ran: string[] = []
-  on('command.list', () => ({ value: [{ name: 'goal', description: '', source: 'builtin' }] }) as never)
-  on('command.run', (_$, e) => {
-    ran.push(`${e.command}|${e.args}`)
-    return { text: 'ok' }
-  })
-  const w = world(on, ['Slash goal.', 'No, I do not want that.', 'Slash goal finish it.', 'Okay, cancel the command.', 'Slash goal.', 'Stop.', 'Fix the tests.'])
-  await $.command.run(talk)
-  await w.clock.advance(0)
-  expect(ran).toEqual([])
-  expect(w.spoken.filter(t => t === 'Dropped.').length).toBe(3)
-  expect(w.submitted).toEqual(['Fix the tests.'])
-  await $.command.run(talk)
-})
-
 const goalCmd = (args: string) => ({ ...talk, command: 'goal', args })
 
 function crons(on: On) {
@@ -559,18 +524,6 @@ test('"stop" also clears the goal and stops the loop', { timeoutMs: 20_000 }, as
   expect(ran).toContain('goal|clear')
   expect(deleted).toEqual(['c1'])
   expect(w.spoken).toContain('Stopped, and cleared the goal and stopped the loop.')
-  await $.command.run(talk)
-})
-
-test('a slash command with no answer drops after 30 seconds', { timeoutMs: 20_000 }, async ($, on) => {
-  const ran = goals(on)
-  on('command.list', () => ({ value: [{ name: 'goal', description: '', source: 'builtin' }] }) as never)
-  const w = world(on, ['Slash goal.'])
-  await $.command.run(talk)
-  await w.clock.advance(0)
-  await w.clock.advance(30_000)
-  expect(ran).toEqual([])
-  expect(w.spoken).toContain('Dropped the goal command. No answer came.')
   await $.command.run(talk)
 })
 
@@ -725,6 +678,37 @@ test('the stop button stops the main work', { timeoutMs: 20_000 }, async ($, on)
   await ui.press({ key: 'stop', in: 'voice' } as never)
   await w.clock.advance(0)
   expect(aborted).toEqual(['t1'])
+  await $.command.run(talk)
+})
+
+test('"set a goal to …" starts a goal right away and "clear goal" ends it', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran = goals(on)
+  const w = world(on, ['Set a goal to finish the audit fixes.', 'Clear goal.'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(ran).toEqual(['goal|finish the audit fixes', 'goal|clear'])
+  expect(w.spoken).toContain('Goal cleared.')
+  expect(w.submitted).toEqual([])
+  await $.command.run(talk)
+})
+
+test('"start a loop every five minutes to …" starts a timed loop', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran = goals(on)
+  const w = world(on, ['Start a loop every five minutes to check the build.', 'Start a loop to check CI every 2 hours.', 'Start a loop to watch the deploy.'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(ran).toEqual(['loop|5m check the build', 'loop|2h check CI', 'loop|watch the deploy'])
+  expect(w.submitted).toEqual([])
+  await $.command.run(talk)
+})
+
+test('"slash goal" is now ordinary speech', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran = goals(on)
+  const w = world(on, ['Slash goal finish it.'])
+  await $.command.run(talk)
+  await w.clock.advance(0)
+  expect(ran).toEqual([])
+  expect(w.submitted).toEqual(['Slash goal finish it.'])
   await $.command.run(talk)
 })
 

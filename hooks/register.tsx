@@ -57,13 +57,13 @@ const AGENT_STATUS = /^\W*(agent status|status|what are (the )?agents doing|how 
 const AGENT_TELL = /^\W*(?:tell|ask|message)\s+(.+?)(?:\s+to\s+|\s+that\s+|,\s*|:\s*|\s+(?=(?:what|whether|if|how|why|when|where|which)\b))(.+)$/i
 const AGENT_STOP = /^\W*(?:stop|kill|cancel)\s+(.+?)\W*$/i
 const FINISH_GAP_MS = 4_000
-const SLASH = /(?:\bslash\s+|(?:^|\s)\/(?=\w))(.+)$/i
-const FILLER = /^\W*(?:(?:okay|ok|so|alright|um|uh|and|then)\b\W*)+/i
-const YES = /^\W*(yes|yeah|yep|yup|sure|ok(ay)?|go( ahead)?|do it|start( it)?|run it|(we('re)? )?good|sounds good|correct|right)\W*$/i
 const GOAL_CLEAR = /^\W*(?:(?:okay|ok|so|hey)\W+)*(?:clear|stop|end|cancel|drop|remove|delete)\s+(?:the\s+)?goal\W*$/i
 const LOOP_STOP = /^\W*(?:(?:okay|ok|so|hey)\W+)*(?:stop|end|cancel|kill|clear)\s+(?:the\s+)?loops?\W*$/i
 const GOAL_OFF = new Set(['clear', 'stop', 'off', 'reset', 'none', 'cancel'])
-const CONFIRM_MS = 30_000
+const GOAL_SET = /^\W*(?:(?:okay|ok|so|alright)\W+)*(?:(?:set|start|make|add)\s+(?:a\s+|the\s+|my\s+)?(?:new\s+)?goal|(?:my\s+|the\s+)?goal\s+is)\b\W*(?:to|of|that|for|:)?\s*(.+?)\W*$/i
+const LOOP_START = /^\W*(?:(?:okay|ok|so|alright)\W+)*(?:start|set up|make|run|add)\s+(?:a\s+|the\s+)?(?:new\s+)?loop\b\W*(?:to|that|for|:)?\s*(.+?)\W*$/i
+const EVERY = /\s*,?\s*\bevery\s+(?:(\d+|[a-z]+)\s+)?(second|minute|hour|day)s?\b\s*,?/i
+const UNIT: Record<string, string> = { second: 's', minute: 'm', hour: 'h', day: 'd' }
 const NEXT_SESSION = /^\W*(?:(?:okay|ok|so)\W+)*(?:next(?: session| one)?|skip(?: it| this| that)?)\W*$/i
 const SWITCH = /^\W*(?:(?:okay|ok|so)\W+)*(?:switch|go|go back|back|talk|move)\s+(?:over\s+)?to\s+(.+?)\W*$/i
 const WAITING = /^\W*(?:(?:what|who)(?:'s| is) waiting|(?:list (?:the )?)?sessions|session status)\W*$/i
@@ -71,7 +71,6 @@ const BUTTON_SAYS = { stop: 'stop', send: 'send now', next: 'next', goal: 'clear
 const RANK_WORD: Record<number, string> = { 3: 'a question', 2: 'a problem', 1: 'a result' }
 const MUTE = /^\W*(?:(?:okay|ok|hey|claude)\W+)*(mute|deafen)(?:\W+(?:me|mic|the mic|yourself|everything))?\W*$/i
 const UNMUTE = /^\W*(?:(?:okay|ok|hey|claude)\W+)*un[\s-]?(?:mute|deafen)(?:\W+(?:me|mic|the mic))?\W*$/i
-const NO = /^\W*(?:(?:okay|ok|so|um|uh|oh)\W+)*(?:no|nope|cancel|drop|stop|forget|scratch|never ?mind|don'?t)\b/i
 
 const NUMBERS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
 const SOUNDS_LIKE: Record<string, number> = { won: 1, to: 2, too: 2, tree: 3, for: 4, fore: 4, ate: 8 }
@@ -91,7 +90,6 @@ let turnId: string | undefined
 let micLevel: string | undefined
 let voiceName: string | undefined
 let whisperModel: string | undefined
-let pendingCommand: { name: string; args: string } | undefined
 let finished: AgentRow[] = []
 let isFinishDue = false
 let isGoalChecked = false
@@ -204,7 +202,6 @@ function setMute($: EngineInterface, next: MuteState) {
 function turnOff($: EngineInterface, why?: string, isQuitting = true) {
   isActive = false
   isHearing = false
-  pendingCommand = undefined
   muteState = ''
   void update($, mute, () => '')
   sessionId++
@@ -359,10 +356,9 @@ async function onHeard($: EngineInterface, text: string) {
   const muting = text.match(MUTE)
   if (muting) return void setMute($, muting[1]!.toLowerCase() === 'deafen' ? 'deafened' : 'muted')
   if (UNMUTE.test(text)) return void speak($, 'Not muted.')
-  if (pendingCommand) return confirmCommand($, text)
   if (DISCARD.test(text)) return
   if (await control($, text)) return
-  if (await slashCommand($, text)) return
+  if (await goalOrLoop($, text)) return
   if (await agentControl($, text)) return
   if (isWorking && ASIDE.test(text)) return void aside($, text)
   if (isWorking) {
@@ -521,59 +517,25 @@ function treeOrder(list: AgentRow[]) {
   return out
 }
 
-function wordsOf(text: string) {
-  return text.toLowerCase().replace(/[^a-z0-9' ]/g, ' ').split(/\s+/).filter(Boolean)
+function loopArgs(task: string) {
+  const every = task.match(EVERY)
+  if (!every) return task
+  const word = (every[1] ?? 'one').toLowerCase()
+  const n = /^\d+$/.test(word) ? Number(word) : word === 'a' || word === 'an' ? 1 : NUMBERS.indexOf(word)
+  const rest = task.replace(EVERY, ' ').replace(/\s+/g, ' ').trim().replace(/^(?:to|and)\s+/i, '')
+  return n > 0 ? `${n}${UNIT[every[2]!.toLowerCase()]} ${rest}` : task
 }
 
-function sayName(name: string) {
-  return name.replace(/[^a-z0-9]+/gi, ' ').trim()
-}
-
-async function slashCommand($: EngineInterface, text: string) {
-  const match = text.match(SLASH)
-  if (!match) return false
-  const spoken = wordsOf(match[1]!)
-  const commands = await $.command.list().catch(() => [])
-  let best: { name: string; parts: string[] } | undefined
-  for (const { name } of commands) {
-    const parts = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
-    const isPrefix = parts.length <= spoken.length && parts.every((w, i) => w === spoken[i])
-    if (isPrefix && parts.length > (best?.parts.length ?? 0)) best = { name, parts }
-  }
-  if (!best) return false
-  const again = new RegExp(`\\bslash ${best.parts.join(' ')}\\b`, 'g')
-  const after = spoken.slice(best.parts.length).join(' ').replace(again, '').replace(/\s+/g, ' ').trim()
-  const before = wordsOf(text.slice(0, match.index).replace(FILLER, '')).join(' ')
-  askCommand($, { name: best.name, args: after || before })
+async function goalOrLoop($: EngineInterface, text: string) {
+  const goalText = text.match(GOAL_SET)?.[1]
+  const loopTask = goalText ? undefined : text.match(LOOP_START)?.[1]
+  const [command, args] = goalText ? ['goal', goalText] : loopTask ? ['loop', loopArgs(loopTask)] : []
+  if (!command || !args) return false
+  showSent($, `/${command} ${args}`)
+  const r = await $.command.run({ command, args }).catch(() => undefined)
+  if (!r) void speak($, `The ${command} did not start.`)
+  else if (command === 'goal' && (r.text === undefined || r.text.startsWith('Goal set'))) await update($, goal, () => args)
   return true
-}
-
-function askCommand($: EngineInterface, cmd: { name: string; args: string }) {
-  const asked = { ...cmd }
-  pendingCommand = asked
-  $.clock.after(CONFIRM_MS, () => {
-    if (pendingCommand !== asked) return
-    pendingCommand = undefined
-    showSent($, '')
-    void speak($, `Dropped the ${sayName(cmd.name)} command. No answer came.`)
-  })
-  showSent($, `/${cmd.name}${cmd.args ? ` ${cmd.args}` : ''} (waiting for your okay)`)
-  void speak($, cmd.args ? `Run ${sayName(cmd.name)} with: ${cmd.args}. Okay?` : `What should the ${sayName(cmd.name)} be? Or say "run it" to run it as is.`)
-}
-
-function confirmCommand($: EngineInterface, text: string) {
-  const cmd = pendingCommand!
-  if (NO.test(text)) {
-    pendingCommand = undefined
-    showSent($, '')
-    void speak($, 'Dropped.')
-    return
-  }
-  if (!YES.test(text)) return askCommand($, { ...cmd, args: text.replace(/[.!?\s]+$/, '') })
-  pendingCommand = undefined
-  showSent($, `/${cmd.name}${cmd.args ? ` ${cmd.args}` : ''}`)
-  void speak($, `Running ${sayName(cmd.name)}.`)
-  void $.command.run({ command: cmd.name, args: cmd.args }).catch(() => speak($, `${sayName(cmd.name)} did not run.`))
 }
 
 async function agentControl($: EngineInterface, text: string) {
@@ -761,8 +723,7 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     turnId = e.turnId
-    pendingCommand = undefined
-    isGoalChecked = false
+      isGoalChecked = false
     if (await read($, loop)) void syncLoops($)
     if (isActive) void call($, `/state?session=${encodeURIComponent(sid)}`, 'working')
     isWorking = true
