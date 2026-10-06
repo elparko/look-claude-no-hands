@@ -59,7 +59,7 @@ const Indicator: ClientModule<Props, number> = (props, surface) => {
   const color = mute === 'deafened' ? 'red' : mute === 'muted' ? 'yellow' : look.color
   const label = mute ? `${look.label} · ${mute}` : look.label
   const glyph = look.isWave && !mute ? wave(frame) : SPINNER[frame % SPINNER.length]
-  const hint = mute ? 'say "unmute" · /talk unmute' : queue.length > 0 ? '"send now" · "cancel" · "clear queue" · "stop"' : agents.length > 0 && look.label === 'Working' ? '"tell agent 2 to …" · "stop agent 2" · "agent status"' : look.hint
+  const hint = mute ? (mute === 'deafened' ? 'mic and sound off · click to turn back on' : 'mic off · click Mic muted to turn it on') : queue.length > 0 ? '"send now" · "cancel" · "clear queue" · "stop"' : agents.length > 0 && look.label === 'Working' ? '"tell agent 2 to …" · "stop agent 2" · "agent status"' : look.hint
 
   const tail = (text: string) => (text.length > 400 ? `…${text.slice(-400)}` : text)
 

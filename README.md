@@ -42,9 +42,9 @@ The first `/talk` takes a few minutes: `uv` installs the Python packages, and tw
 | Start a goal | Say "set a goal to finish the audit fixes". It starts at once; say "clear goal" to end it. |
 | Start a loop | Say "start a loop every five minutes to check the build". Without "every …", Claude picks the pace. Say "stop loop" to end it. |
 | Use the panel buttons | The top of the panel shows **Mic on / Mic muted** and **Sound on / Deafened**; click either to toggle it. **Stop** shows while Claude works, **Send now** when words are queued, **Next session** when another session is waiting, **Clear** and **Stop** beside a goal or loop, and **Voice off** always. |
-| Mute | Say "mute" or type `/talk mute`. Claude keeps talking but ignores what you say, except "unmute". |
-| Deafen | Say "deafen" or type `/talk deafen`. Claude also stops talking; its replies stay on screen. |
-| Unmute | Say "unmute" or type `/talk unmute`. It ends mute and deafen. While muted, the mic stays open and speech is still transcribed on your Mac so "unmute" can be heard; nothing else is acted on. |
+| Mute | Click **Mic on**, say "mute", or type `/talk mute`. The microphone closes, so nothing you say is heard; Claude keeps talking. Nothing is spoken to confirm it; the panel turns yellow. |
+| Deafen | Click **Sound on**, say "deafen", or type `/talk deafen`. The microphone closes and Claude stops talking; replies stay on screen. The panel turns red. |
+| Unmute | Click the button again or type `/talk unmute`. With the microphone closed, saying "unmute" cannot work. |
 | End a goal | Say "clear goal". The panel shows the active goal while one is set. Pressing Esc only pauses a goal: it comes back on your next message. |
 | End a loop | Say "stop loop". It deletes this session's repeating scheduled prompts and cancels the next self-paced run. The panel shows the loop while one is set. |
 | Message one agent | Say "tell agent 2 to skip the tests" or "ask the reviewer what it found". Agents go by number or by words from their name. |

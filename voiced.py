@@ -402,18 +402,23 @@ def join(sid: str, label: str, send):
         clients[sid] = c
         if floor[0] not in clients:
             floor[0] = sid
-        running = mic_thread[0]
-    if running is not None and mic_stop.is_set():
-        running.join(timeout=3)
-        running = mic_thread[0]
-    if running is None:
-        mic_stop.clear()
-        mic_thread[0] = threading.Thread(target=run_mic, daemon=True)
-        mic_thread[0].start()
-    elif listening[0]:
+    if not mute[0] and not start_mic() and listening[0]:
         c.post({"ready": True})
     broadcast()
     return c
+
+
+def start_mic() -> bool:
+    running = mic_thread[0]
+    if running is not None and mic_stop.is_set():
+        running.join(timeout=3)
+        running = mic_thread[0]
+    if running is not None or not clients:
+        return False
+    mic_stop.clear()
+    mic_thread[0] = threading.Thread(target=run_mic, daemon=True)
+    mic_thread[0].start()
+    return True
 
 
 def leave(c):
@@ -517,7 +522,7 @@ class Handler(BaseHTTPRequestHandler):
             with floor_lock:
                 return self.reply(json.dumps(roster()))
         if url.path != "/listen":
-            return self.reply("ok listening" if listening[0] else "ok idle")
+            return self.reply("ok listening" if listening[0] or clients else "ok idle")
         query = parse_qs(url.query)
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
@@ -599,7 +604,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply("ok")
         if url.path == "/mute":
             mute[0] = body.strip() if body.strip() in ("muted", "deafened") else ""
-            muted.set() if mute[0] else muted.clear()
+            if mute[0]:
+                muted.set()
+                mic_stop.set()
+                stops[0] += 1 if mute[0] == "deafened" else 0
+            else:
+                muted.clear()
+                start_mic()
             broadcast()
             return self.reply("ok")
         if url.path == "/stop":

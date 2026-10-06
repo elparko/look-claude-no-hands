@@ -70,7 +70,6 @@ const WAITING = /^\W*(?:(?:what|who)(?:'s| is) waiting|(?:list (?:the )?)?sessio
 const BUTTON_SAYS = { stop: 'stop', send: 'send now', next: 'next', goal: 'clear goal', loop: 'stop loop' }
 const RANK_WORD: Record<number, string> = { 3: 'a question', 2: 'a problem', 1: 'a result' }
 const MUTE = /^\W*(?:(?:okay|ok|hey|claude)\W+)*(mute|deafen)(?:\W+(?:me|mic|the mic|yourself|everything))?\W*$/i
-const UNMUTE = /^\W*(?:(?:okay|ok|hey|claude)\W+)*un[\s-]?(?:mute|deafen)(?:\W+(?:me|mic|the mic))?\W*$/i
 
 const NUMBERS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
 const SOUNDS_LIKE: Record<string, number> = { won: 1, to: 2, too: 2, tree: 3, for: 4, fore: 4, ate: 8 }
@@ -97,6 +96,7 @@ let wakeAt = 0
 let muteState: MuteState = ''
 let sid = ''
 let label = 'Claude'
+let isGreeted = false
 
 const MODELS = 'turbo (1.6 GB, default, most accurate), small (480 MB), base (145 MB), tiny (75 MB, most mistakes)'
 
@@ -166,11 +166,11 @@ function rankOf(text: string) {
   return 1
 }
 
-function speak($: EngineInterface, text: string, { id = speechId, isAlways = false, rank }: { id?: number; isAlways?: boolean; rank?: number } = {}) {
+function speak($: EngineInterface, text: string, { id = speechId, rank }: { id?: number; rank?: number } = {}) {
   lastSpokenAt = Date.now()
   speech = speech.then(async () => {
     if (!text || id !== speechId || !isActive) return
-    if (muteState === 'deafened' && !isAlways) return showReply($, text)
+    if (muteState === 'deafened') return showReply($, text)
     speakingCount++
     showReply($, text)
     refresh($)
@@ -194,9 +194,7 @@ function setMute($: EngineInterface, next: MuteState) {
   if (isActive) void call($, '/mute', next)
   if (next) hear($, '')
   if (next === 'deafened') silence($)
-  const said = { '': 'Unmuted.', muted: 'Muted. Say unmute to come back.', deafened: 'Deafened. Say unmute to come back.' }[next]
-  void speak($, said, { isAlways: true })
-  return said
+  return { '': 'Mic on.', muted: 'Mic off. Claude still talks.', deafened: 'Mic and sound off.' }[next]
 }
 
 function turnOff($: EngineInterface, why?: string, isQuitting = true) {
@@ -352,10 +350,9 @@ async function aside($: EngineInterface, question: string) {
 async function onHeard($: EngineInterface, text: string) {
   hear($, '')
   if (!/[a-z0-9]/i.test(text)) return
-  if (muteState) return void (UNMUTE.test(text) && setMute($, ''))
+  if (muteState) return
   const muting = text.match(MUTE)
   if (muting) return void setMute($, muting[1]!.toLowerCase() === 'deafen' ? 'deafened' : 'muted')
-  if (UNMUTE.test(text)) return void speak($, 'Not muted.')
   if (DISCARD.test(text)) return
   if (await control($, text)) return
   if (await goalOrLoop($, text)) return
@@ -383,7 +380,10 @@ async function converse($: EngineInterface) {
       rest = lines.pop() ?? ''
       for (const line of lines) {
         const msg = JSON.parse(line) as Heard
-        if (msg.ready) void speak($, "I'm listening.")
+        if (msg.ready && !isGreeted) {
+          isGreeted = true
+          void speak($, "I'm listening.")
+        }
         if (msg.sessions) void update($, sessions, () => msg.sessions!)
         if (msg.mute !== undefined && msg.mute !== muteState) {
           muteState = msg.mute
@@ -411,6 +411,7 @@ async function converse($: EngineInterface) {
 
 async function start($: EngineInterface, id: number) {
   if (id !== sessionId) return
+  isGreeted = false
   sid = await $.session.id().catch(() => `s${Date.now()}`)
   label = (await $.session.cwd().catch(() => '')).split('/').filter(Boolean).pop() ?? 'Claude'
   refresh($)
